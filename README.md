@@ -10,8 +10,23 @@ uv venv && uv pip install -e ".[dev]"
 
 ## Run
 
+Either set the env var directly:
+
 ```bash
-export FRED_API_KEY="..."
+export FRED_API_KEY="..."          # Linux/Mac
+$env:FRED_API_KEY = "..."          # Windows PowerShell (current session)
+```
+
+Or copy `.env.example` to `.env` and fill in your key (gitignored, persists across sessions):
+
+```bash
+cp .env.example .env
+# edit .env
+```
+
+Then:
+
+```bash
 roro run --config configs/default.yaml --date 2026-05-27 --as-of-data-date 2026-05-26
 ```
 

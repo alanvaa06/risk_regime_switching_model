@@ -7,10 +7,13 @@ from pathlib import Path
 from typing import Any
 
 import click
+from dotenv import load_dotenv
 
 from roro.config import load_config
 from roro.engine import run as engine_run
 from roro.fred_client import FredApiClient, FredClient
+
+load_dotenv()
 
 
 def _build_fred_client(api_key: str | None) -> FredClient:
