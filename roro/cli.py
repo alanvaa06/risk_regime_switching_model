@@ -78,7 +78,7 @@ def cmd_run(
 @click.option("--assert-gates", is_flag=True)
 def cmd_backtest(config_path: Path, start: str, end: str, assert_gates: bool) -> None:
     # Lazy import: backtest module is heavy and only needed for this command.
-    from roro.backtest import run_backtest  # type: ignore[import-untyped]  # noqa: PLC0415
+    from roro.backtest import run_backtest  # noqa: PLC0415
 
     cfg = load_config(config_path)
     api_key = os.environ.get("FRED_API_KEY", "")
