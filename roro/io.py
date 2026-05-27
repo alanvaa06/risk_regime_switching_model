@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
+from datetime import date, datetime
 from pathlib import Path
 
 import pandas as pd
 
-from roro.types import PriceFrame, Universe
+from roro.fred_client import FRED_SERIES_IDS, FredClient
+from roro.types import FredFrame, PriceFrame, Universe
 
 COMPOSITE_NAMES: frozenset[str] = frozenset({"DM", "EM", "Europe", "Asia", "World", "LatAm"})
 
@@ -36,6 +39,21 @@ def load_prices(xlsx_path: Path | str) -> PriceFrame:
     # Align FI columns to the equity universe (some FI countries may be absent in edge data)
     common = [c for c in eq.columns if c in fi.columns]
     return PriceFrame(equity_lc=eq[common], fi_lc=fi[common])
+
+
+def load_fred(client: FredClient, start: date, end: date) -> FredFrame:
+    series: dict[str, pd.Series] = {}
+    hashes: dict[str, str] = {}
+    for sid in FRED_SERIES_IDS:
+        s = client.fetch(sid, start, end)
+        series[sid] = s
+        hashes[sid] = _hash_series(s)
+    return FredFrame(series=series, pulled_at=datetime.now(), series_hashes=hashes)
+
+
+def _hash_series(s: pd.Series) -> str:
+    payload = pd.util.hash_pandas_object(s, index=True).to_numpy().tobytes()
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _read_price_sheet(xlsx_path: Path | str, sheet: str) -> pd.DataFrame:
