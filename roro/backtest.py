@@ -95,7 +95,7 @@ def run_backtest(
         "all_passed": all(bool(v.get("passed", False)) for v in gates.values()),
     }
     (cfg.output_dir / "acceptance_report.json").write_text(
-        json.dumps(report, indent=2, default=str)
+        json.dumps(report, indent=2, default=str), encoding="utf-8"
     )
     _write_event_recognition(cfg.output_dir / "event_recognition.csv")
     _write_validation_history(result, cfg.output_dir / "validation_corr_history.csv")
@@ -231,7 +231,7 @@ def _write_event_recognition(path: Path) -> None:
 def _write_validation_history(result: RunResult, path: Path) -> None:
     df = result.validation.rolling_corr_60d
     if df.empty:
-        path.write_text("date,segment,fred_series,rho\n")
+        path.write_text("date,segment,fred_series,rho\n", encoding="utf-8")
         return
     stacked = df.stack(level=[0, 1], future_stack=True)
     out = pd.DataFrame(stacked).reset_index()
@@ -242,7 +242,7 @@ def _write_validation_history(result: RunResult, path: Path) -> None:
 def _write_stability_metrics(result: RunResult, path: Path) -> None:
     transitions = result.alerts.bucket_transitions
     if transitions.empty:
-        path.write_text("quarter,segment,transitions\n")
+        path.write_text("quarter,segment,transitions\n", encoding="utf-8")
         return
     transitions = transitions.copy()
     transitions["quarter"] = pd.PeriodIndex(transitions["date"], freq="Q").astype(str)

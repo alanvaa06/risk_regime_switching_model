@@ -128,7 +128,9 @@ def write_run(
     _write_tripwire(result.tripwire, tmp / "tripwire.csv")
 
     snapshot = _build_snapshot(result, run_date=run_date, as_of_data_date=as_of_data_date)
-    (tmp / "snapshot.json").write_text(json.dumps(snapshot, indent=2, default=str))
+    (tmp / "snapshot.json").write_text(
+        json.dumps(snapshot, indent=2, default=str), encoding="utf-8"
+    )
 
     if final.exists():
         shutil.rmtree(final)
@@ -138,7 +140,7 @@ def write_run(
 
 def read_run(run_dir: Path) -> dict[str, Any]:
     return {
-        "snapshot": json.loads((run_dir / "snapshot.json").read_text()),
+        "snapshot": json.loads((run_dir / "snapshot.json").read_text(encoding="utf-8")),
         "beta_series": pd.read_csv(run_dir / "beta_series.csv", parse_dates=["date"]),
         "regimes": pd.read_csv(run_dir / "regimes.csv", parse_dates=["date"]),
         "correlation": pd.read_csv(run_dir / "correlation.csv", parse_dates=["date"]),
@@ -171,7 +173,9 @@ def _write_beta(bbs: BetaBySegment, path: Path) -> None:
     cap = _stack_segment_frame({k: v.cap_wtd for k, v in bbs.by_segment.items()}, "cap_wtd")
     eq = _stack_segment_frame({k: v.eq_wtd for k, v in bbs.by_segment.items()}, "eq_wtd")
     if cap.empty and eq.empty:
-        path.write_text("date,segment,scheme,beta,r2,n,suppressed,singular\n")
+        path.write_text(
+            "date,segment,scheme,beta,r2,n,suppressed,singular\n", encoding="utf-8"
+        )
         return
     pd.concat([cap, eq], ignore_index=True).to_csv(path, index=False)
 
@@ -186,7 +190,8 @@ def _melt_with_date(frame: pd.DataFrame, value_name: str) -> pd.DataFrame:
 def _write_regime(rf: RegimeFrame, path: Path) -> None:
     if rf.tercile.empty:
         path.write_text(
-            "date,segment,percentile_5y,tercile,quintile,direction,n,thin_cut,bootstrap\n"
+            "date,segment,percentile_5y,tercile,quintile,direction,n,thin_cut,bootstrap\n",
+            encoding="utf-8",
         )
         return
     merged = _melt_with_date(rf.tercile, "tercile")
@@ -206,7 +211,9 @@ def _write_regime(rf: RegimeFrame, path: Path) -> None:
 
 def _write_correlation(cf: CorrelationFrame, path: Path) -> None:
     if cf.avg_pairwise_3m.empty:
-        path.write_text("date,segment,avg_pairwise_3m,pc1_variance_share\n")
+        path.write_text(
+            "date,segment,avg_pairwise_3m,pc1_variance_share\n", encoding="utf-8"
+        )
         return
     avg = _melt_with_date(cf.avg_pairwise_3m, "avg_pairwise_3m")
     pc1 = _melt_with_date(cf.pc1_variance_share, "pc1_variance_share")
@@ -215,7 +222,9 @@ def _write_correlation(cf: CorrelationFrame, path: Path) -> None:
 
 def _write_validation(vf: ValidationFrame, path: Path) -> None:
     if vf.rolling_corr_60d.empty:
-        path.write_text("date,segment,fred_series,rolling_corr_60d\n")
+        path.write_text(
+            "date,segment,fred_series,rolling_corr_60d\n", encoding="utf-8"
+        )
         return
     stacked = vf.rolling_corr_60d.stack(level=[0, 1], future_stack=True)
     series = pd.Series(stacked, name="rolling_corr_60d")
@@ -233,7 +242,7 @@ def _write_alerts(a: AlertSet, path: Path) -> None:
     if not a.validation_degradation.empty:
         rows.append(a.validation_degradation.assign(kind="validation_degradation"))
     if not rows:
-        path.write_text("date,kind,segment\n")
+        path.write_text("date,kind,segment\n", encoding="utf-8")
         return
     pd.concat(rows, ignore_index=True).to_csv(path, index=False)
 

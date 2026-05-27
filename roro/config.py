@@ -44,7 +44,7 @@ def _coerce_field(name: str, value: Any) -> Any:
 
 
 def load_config(yaml_path: Path, overrides: dict[str, Any] | None = None) -> EngineConfig:
-    raw = yaml.safe_load(Path(yaml_path).read_text()) or {}
+    raw = yaml.safe_load(Path(yaml_path).read_text(encoding="utf-8")) or {}
     overrides = overrides or {}
     merged: dict[str, Any] = {**raw, **overrides}
     allowed = {f.name for f in fields(EngineConfig)}
