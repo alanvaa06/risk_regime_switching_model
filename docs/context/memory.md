@@ -1,4 +1,10 @@
 # Memory
 
-- decision: composite rows in Panel sheet identified by Country in {DM, EM, Europe, Asia, World, LatAm}; load_panel returns Universe(countries, composites).
-- decision: validators raise DataSourceError for hard failures (zero/negative mcap, bad Segment, date gap > MAX_DATE_GAP_DAYS=3) and return list[str] warnings for soft issues (per-series NaNs).
+- decision: static cap weights (Panel snapshot 2026-05-26) applied across full history; time-varying deferred to v1.1.
+- decision: composite rows (Panel 32–37) used only by `roro.validation`, never by regressions.
+- decision: engine writes CSV + snapshot.json; no Postgres, no Parquet, no dashboard in this scope.
+- decision: bucket schemes available are TERCILE (default), QUINTILE, ASYM_20_60_20.
+- decision: bootstrap suppression below `bootstrap_min_days=252` of beta history.
+- decision: tripwire mirrors the main pipeline with 1M return window + 10d EWMA halflife.
+- decision: composite price series not yet wired into PriceFrame; internal consistency runs against empty composite frames in v1.0 — deferred to v1.1.
+- decision: pandas .ewm(halflife, adjust=False).std() approximates RiskMetrics; mean-demeaned + sample-bias-corrected, numerically close to raw recursion for near-zero-mean daily returns.
