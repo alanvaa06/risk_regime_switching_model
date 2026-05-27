@@ -1,7 +1,7 @@
+import dataclasses
 from pathlib import Path
 
 import pytest
-import yaml
 
 from roro.config import BucketScheme, EngineConfig, load_config
 
@@ -43,7 +43,7 @@ def test_cli_overrides_win(tmp_path: Path) -> None:
 
 def test_frozen() -> None:
     cfg = EngineConfig(data_path=Path("data.xlsx"), output_dir=Path("outputs"))
-    with pytest.raises(Exception):
+    with pytest.raises(dataclasses.FrozenInstanceError):
         cfg.ewma_halflife_days = 99  # type: ignore[misc]
 
 
