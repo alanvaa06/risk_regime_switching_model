@@ -37,12 +37,14 @@ def _check_date_continuity(df: pd.DataFrame, *, frame_name: str) -> None:
         raise DataSourceError(f"{frame_name}: price frame is empty")
     idx = pd.DatetimeIndex(df.index)
     bdays_expected = pd.bdate_range(idx.min(), idx.max())
-    missing = bdays_expected.difference(idx)
-    if len(missing) == 0:
+    present_mask = bdays_expected.isin(idx)
+    if present_mask.all():
         return
-    # Find longest contiguous gap
-    diffs = missing.to_series().diff().dt.days.fillna(1)
-    longest = int((diffs == 1).astype(int).groupby((diffs != 1).cumsum()).cumsum().max())
+    missing_mask = ~present_mask
+    # Length of each consecutive-True run in missing_mask
+    group_id = (missing_mask != pd.Series(missing_mask).shift(fill_value=False)).cumsum()
+    run_lengths = pd.Series(missing_mask).groupby(group_id).sum()
+    longest = int(run_lengths.max())
     if longest > MAX_DATE_GAP_DAYS:
         raise DataSourceError(
             f"{frame_name}: date continuity broken — longest gap {longest} business days"

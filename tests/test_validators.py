@@ -54,3 +54,32 @@ def test_validate_prices_warns_on_per_series_nan() -> None:
     pf = PriceFrame(equity_lc=df, fi_lc=df)
     warnings = validate_prices(pf)
     assert any("BR" in w for w in warnings)
+
+
+def test_validate_prices_weekend_spanning_gap_counted_as_one_run() -> None:
+    """Fri + Mon missing must count as a 2-bday gap, not two separate 1-day gaps."""
+    dates = pd.bdate_range("2024-01-01", "2024-01-31").tolist()
+    # Find a Fri-Mon pair to drop. 2024-01-05 is Fri, 2024-01-08 is Mon.
+    drop = {pd.Timestamp("2024-01-05"), pd.Timestamp("2024-01-08")}
+    kept = [d for d in dates if d not in drop]
+    df = pd.DataFrame({"US": range(len(kept))}, index=pd.DatetimeIndex(kept))
+    pf = PriceFrame(equity_lc=df, fi_lc=df)
+    # 2-bday gap is within tolerance (MAX=3), so should pass without raising
+    warnings = validate_prices(pf)
+    assert warnings == [] or all("continuity" not in w for w in warnings)
+
+
+def test_validate_prices_four_bday_gap_across_weekend_raises() -> None:
+    """Thu+Fri+Mon+Tue missing = 4-bday continuous gap (must raise)."""
+    dates = pd.bdate_range("2024-01-01", "2024-01-31").tolist()
+    drop = {
+        pd.Timestamp("2024-01-04"),  # Thu
+        pd.Timestamp("2024-01-05"),  # Fri
+        pd.Timestamp("2024-01-08"),  # Mon
+        pd.Timestamp("2024-01-09"),  # Tue
+    }
+    kept = [d for d in dates if d not in drop]
+    df = pd.DataFrame({"US": range(len(kept))}, index=pd.DatetimeIndex(kept))
+    pf = PriceFrame(equity_lc=df, fi_lc=df)
+    with pytest.raises(DataSourceError, match="continuity"):
+        validate_prices(pf)
