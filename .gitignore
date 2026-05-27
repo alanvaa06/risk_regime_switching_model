@@ -25,3 +25,7 @@ backtest/
 # OS
 .DS_Store
 Thumbs.db
+
+# Proprietary data / Excel locks
+data.xlsx
+~$*.xlsx
