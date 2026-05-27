@@ -8,6 +8,10 @@ import pandas as pd
 import pytest
 
 
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption("--regenerate-goldens", action="store_true", default=False)
+
+
 @pytest.fixture
 def tiny_xlsx(tmp_path: Path) -> Path:
     """Build a 4-country + 2-composite tiny xlsx that mirrors data.xlsx layout."""
