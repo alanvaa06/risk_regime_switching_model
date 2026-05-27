@@ -8,8 +8,9 @@ import numpy as np
 import pandas as pd
 from hypothesis import given, settings
 
-from roro.regression import _wls_slope, cross_section, daily_panel
-from roro.segments import ASSET_EQ, SeriesId
+from roro.regression import _wls_slope, compute_beta_by_segment, cross_section, daily_panel
+from roro.segments import ASSET_EQ, SeriesId, partition
+from roro.types import Universe
 from tests.strategies import positive_weights
 
 
@@ -83,3 +84,37 @@ def test_ols_equals_wls_when_weights_uniform(w: np.ndarray[Any, np.dtype[np.floa
     assert abs(beta_uniform - beta_explicit_avg) < 1e-12
     # `w` is exercised by hypothesis to ensure weight-array dtype invariants hold.
     assert w.dtype == np.float64
+
+
+def test_compute_beta_by_segment_produces_all_cuts() -> None:
+    dates = pd.bdate_range("2024-01-01", periods=10)
+    countries = [f"C{i}" for i in range(20)]
+    u = Universe(
+        countries=pd.DataFrame(
+            {
+                "Country": countries,
+                "Segment": ["DM"] * 10 + ["EM"] * 10,
+                "Equity_Mkt_Cap_Val": list(range(1, 21)),
+                "Fixed_Income_Mkt_Cap_Val": list(range(1, 21)),
+            }
+        ),
+        composites=pd.DataFrame({"Country": ["DM"]}),
+    )
+    eq_ret = pd.DataFrame(0.01, index=dates, columns=countries)
+    fi_ret = pd.DataFrame(0.005, index=dates, columns=countries)
+    eq_vol = pd.DataFrame(0.15, index=dates, columns=countries)
+    fi_vol = pd.DataFrame(0.05, index=dates, columns=countries)
+
+    bbs = compute_beta_by_segment(
+        dates=dates,
+        cuts=partition(u),
+        equity_returns_3m=eq_ret,
+        fi_returns_3m=fi_ret,
+        equity_vol=eq_vol,
+        fi_vol=fi_vol,
+        min_n=5,
+    )
+    expected = {"global", "DM", "EM", "Equity", "FI", "DM_Eq", "EM_Eq", "DM_FI", "EM_FI", "LatAm"}
+    assert set(bbs.by_segment) == expected
+    assert len(bbs.by_segment["global"].cap_wtd) == 10
+    assert "beta" in bbs.by_segment["global"].cap_wtd.columns

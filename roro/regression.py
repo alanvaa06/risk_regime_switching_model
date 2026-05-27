@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from roro.segments import ASSET_EQ, ASSET_FI, SeriesId
+from roro.types import BetaBySegment, BetaFrame
 
 FloatArray = np.ndarray[Any, np.dtype[np.float64]]
 
@@ -145,3 +146,59 @@ def _wls_with_r2(x: FloatArray, y: FloatArray, w: FloatArray) -> tuple[float, fl
     ss_tot = float(np.sum(w_norm * (y - y_bar) ** 2))
     r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
     return float(theta[1]), r2
+
+
+def compute_beta_by_segment(
+    dates: pd.DatetimeIndex,
+    cuts: dict[str, list[SeriesId]],
+    *,
+    equity_returns_3m: pd.DataFrame,
+    fi_returns_3m: pd.DataFrame,
+    equity_vol: pd.DataFrame,
+    fi_vol: pd.DataFrame,
+    min_n: int,
+) -> BetaBySegment:
+    """Iterate (date × segment) producing a BetaFrame per cut."""
+    out: dict[str, BetaFrame] = {}
+    for cut_name, series in cuts.items():
+        rows_cap: list[dict[str, Any]] = []
+        rows_eq: list[dict[str, Any]] = []
+        spread: list[float] = []
+        spread_idx: list[pd.Timestamp] = []
+        for d in dates:
+            panel = daily_panel(
+                date=d,
+                series=series,
+                equity_returns=equity_returns_3m,
+                fi_returns=fi_returns_3m,
+                equity_vol=equity_vol,
+                fi_vol=fi_vol,
+            )
+            res = cross_section(panel, min_n=min_n)
+            rows_cap.append(
+                {
+                    "date": d,
+                    "beta": res.beta_cap,
+                    "r2": res.r2_cap,
+                    "n": res.n,
+                    "suppressed": res.suppressed,
+                    "singular": res.singular,
+                }
+            )
+            rows_eq.append(
+                {
+                    "date": d,
+                    "beta": res.beta_eq,
+                    "r2": res.r2_eq,
+                    "n": res.n,
+                    "suppressed": res.suppressed,
+                    "singular": res.singular,
+                }
+            )
+            spread.append(res.slope_spread)
+            spread_idx.append(d)
+        cap_df = pd.DataFrame(rows_cap).set_index("date")
+        eq_df = pd.DataFrame(rows_eq).set_index("date")
+        spread_s = pd.Series(spread, index=pd.DatetimeIndex(spread_idx), name="slope_spread")
+        out[cut_name] = BetaFrame(cap_wtd=cap_df, eq_wtd=eq_df, slope_spread=spread_s)
+    return BetaBySegment(by_segment=out)
