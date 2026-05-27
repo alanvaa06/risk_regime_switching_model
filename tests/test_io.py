@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from roro.io import load_panel
+from roro.io import load_panel, load_prices
 
 
 def test_panel_splits_countries_and_composites(tiny_xlsx: Path) -> None:
@@ -28,3 +28,17 @@ def test_load_panel_missing_column_raises_sorted(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match=r"Equity_Mkt_Cap_Val.*Fixed_Income_Mkt_Cap_Val"):
         load_panel(bad)
+
+
+def test_prices_uses_country_row_as_header(tiny_xlsx: Path) -> None:
+    pf = load_prices(tiny_xlsx)
+    assert "United States" in pf.equity_lc.columns
+    assert "Brazil" in pf.equity_lc.columns
+    # Header row must be country names, not tickers
+    assert "SPX Index" not in pf.equity_lc.columns
+    assert isinstance(pf.equity_lc.index, pd.DatetimeIndex)
+
+
+def test_prices_aligned_columns(tiny_xlsx: Path) -> None:
+    pf = load_prices(tiny_xlsx)
+    assert list(pf.equity_lc.columns) == list(pf.fi_lc.columns)
