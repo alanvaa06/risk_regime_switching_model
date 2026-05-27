@@ -57,8 +57,13 @@ def _write_two_header_sheet(
     countries: list[str],
     data: pd.DataFrame,
 ) -> None:
-    """Mimic data.xlsx layout: row 0 = tickers, row 1 = country names, row 2+ = data."""
-    out = pd.DataFrame(
-        [tickers, countries] + data.reset_index().values.tolist(),
-    )
+    """Mimic data.xlsx layout: row 0 = tickers, row 1 = country names, row 2+ = data.
+
+    Column 0 holds the date in row 2+. Row 0 and row 1 prepend an empty cell so
+    all rows have aligned width (1 + N_countries).
+    """
+    header_row_0 = [""] + tickers
+    header_row_1 = [""] + countries
+    data_rows = data.reset_index().values.tolist()
+    out = pd.DataFrame([header_row_0, header_row_1] + data_rows)
     out.to_excel(writer, sheet_name=sheet, index=False, header=False)

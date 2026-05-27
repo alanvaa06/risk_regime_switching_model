@@ -11,7 +11,7 @@ from roro.types import Universe
 COMPOSITE_NAMES: frozenset[str] = frozenset({"DM", "EM", "Europe", "Asia", "World", "LatAm"})
 
 
-def load_panel(xlsx_path: Path) -> Universe:
+def load_panel(xlsx_path: Path | str) -> Universe:
     df = pd.read_excel(xlsx_path, sheet_name="Panel")
     missing = {"Country", "Segment", "Equity_Mkt_Cap_Val", "Fixed_Income_Mkt_Cap_Val"} - set(
         df.columns
