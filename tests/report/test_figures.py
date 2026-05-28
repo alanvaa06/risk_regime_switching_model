@@ -1,6 +1,7 @@
 """Pure figure-builder tests."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import numpy as np
@@ -470,3 +471,17 @@ def test_scatter_slider_y_is_minus_0_18(bundle: DataBundle) -> None:
 def test_scatter_bottom_margin_is_140(bundle: DataBundle) -> None:
     fig = scatter_vol_return(bundle)
     assert fig.layout.margin.b == 140
+
+
+def test_scatter_marker_hover_template_includes_country_asset(bundle: DataBundle) -> None:
+    """Locks v2 hover behavior: marker traces expose <country>_<asset> via text + template."""
+    fig = scatter_vol_return(bundle)
+    marker_traces = [
+        t for t in fig.data
+        if getattr(t, "mode", None) == "markers" and t.text is not None and len(t.text) > 0
+    ]
+    assert marker_traces, "expected at least one populated markers trace"
+    target = marker_traces[0]
+    assert "%{text}" in target.hovertemplate
+    pattern = re.compile(r"^[A-Za-z .]+_(Eq|FI)$")
+    assert pattern.match(target.text[0]), f"unexpected hover label: {target.text[0]!r}"
