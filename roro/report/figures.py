@@ -9,9 +9,11 @@ import plotly.graph_objects as go
 
 from roro.report.bundle import DataBundle
 
-SegmentFilter = Literal["Full", "DM", "EM", "EM_Eq", "EM_FI"]
+SegmentFilter = Literal["Full", "DM", "EM", "DM_Eq", "EM_Eq", "DM_FI", "EM_FI"]
 
-SCATTER_SEGMENTS: tuple[SegmentFilter, ...] = ("Full", "DM", "EM", "EM_Eq", "EM_FI")
+SCATTER_SEGMENTS: tuple[SegmentFilter, ...] = (
+    "Full", "DM", "EM", "DM_Eq", "EM_Eq", "DM_FI", "EM_FI",
+)
 
 COLOR_DM: str = "#1f77b4"
 COLOR_EM: str = "#ff7f0e"
@@ -20,7 +22,7 @@ _MIN_OBS_FOR_OLS: int = 2
 _TRACES_PER_SEGMENT: int = 4  # DM markers + DM fit + EM markers + EM fit
 
 
-def _series_for_segment(meta: pd.DataFrame, segment: SegmentFilter) -> list[str]:
+def _series_for_segment(meta: pd.DataFrame, segment: SegmentFilter) -> list[str]:  # noqa: PLR0911
     """Return the series_id list matching the segment filter."""
     if segment == "Full":
         return list(meta.index)
@@ -32,6 +34,10 @@ def _series_for_segment(meta: pd.DataFrame, segment: SegmentFilter) -> list[str]
         return list(meta.index[(meta["segment"] == "EM") & (meta["asset"] == "Eq")])
     if segment == "EM_FI":
         return list(meta.index[(meta["segment"] == "EM") & (meta["asset"] == "FI")])
+    if segment == "DM_Eq":
+        return list(meta.index[(meta["segment"] == "DM") & (meta["asset"] == "Eq")])
+    if segment == "DM_FI":
+        return list(meta.index[(meta["segment"] == "DM") & (meta["asset"] == "FI")])
     raise ValueError(f"Unknown segment: {segment}")
 
 

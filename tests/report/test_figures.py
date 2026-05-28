@@ -8,9 +8,7 @@ import pytest
 
 from roro.report.bundle import DataBundle
 from roro.report.figures import (
-    _TRACES_PER_SEGMENT,
     BETA_TS_SEGMENTS,
-    SCATTER_SEGMENTS,
     beta_timeseries,
     scatter_beta_return,
     scatter_vol_return,
@@ -38,7 +36,7 @@ def test_scatter_vol_return_has_segment_dropdown(bundle: DataBundle) -> None:
     menus = fig.layout.updatemenus
     assert menus is not None and len(menus) >= 1
     labels = [btn.label for menu in menus for btn in (menu.buttons or [])]
-    for expected in ("Full", "DM", "EM", "EM_Eq", "EM_FI"):
+    for expected in ("Full", "DM", "EM", "DM_Eq", "EM_Eq", "DM_FI", "EM_FI"):
         assert expected in labels
 
 
@@ -51,7 +49,8 @@ def test_scatter_vol_return_axis_titles(bundle: DataBundle) -> None:
 def test_scatter_vol_return_traces_per_frame_invariant(bundle: DataBundle) -> None:
     """Every frame has the same trace count: len(SCATTER_SEGMENTS) * _TRACES_PER_SEGMENT."""
     fig = scatter_vol_return(bundle)
-    expected = len(SCATTER_SEGMENTS) * _TRACES_PER_SEGMENT
+    # v2: 7 segments * 4 traces per segment (CI ribbon arrives in Task 5)
+    expected = 7 * 4
     for frame in fig.frames:
         assert len(frame.data) == expected
 
@@ -62,18 +61,16 @@ def test_scatter_vol_return_dropdown_toggles_visibility(bundle: DataBundle) -> N
     menus = list(fig.layout.updatemenus)
     assert len(menus) == 1
     buttons = list(menus[0].buttons)
-    n_segments = len(SCATTER_SEGMENTS)
-    expected_total = n_segments * _TRACES_PER_SEGMENT
+    n_segments = 7  # v2
+    expected_total = n_segments * 4  # CI traces arrive in Task 5
     for idx, button in enumerate(buttons):
-        # button.args is a tuple/list: (restyle_dict, layout_dict)
         restyle = button.args[0]
         visibility = list(restyle["visible"])
         assert len(visibility) == expected_total
-        assert sum(visibility) == _TRACES_PER_SEGMENT
-        # Active segment's slice is True, others False
+        assert sum(visibility) == 4
         for seg_idx in range(n_segments):
-            start = seg_idx * _TRACES_PER_SEGMENT
-            end = start + _TRACES_PER_SEGMENT
+            start = seg_idx * 4
+            end = start + 4
             block = visibility[start:end]
             assert all(block) if seg_idx == idx else not any(block)
 
@@ -82,14 +79,24 @@ def test_scatter_vol_return_initial_visibility_is_full_only(bundle: DataBundle) 
     """Initial figure shows only the 'Full' segment's traces visible."""
     fig = scatter_vol_return(bundle)
     traces = list(fig.data)
-    # Full is the first segment in SCATTER_SEGMENTS, so traces[0:_TRACES_PER_SEGMENT] are visible
+    # v2: 7 segments * 4 traces = 28 total
+    assert len(traces) == 7 * 4
     for i, trace in enumerate(traces):
-        is_full_block = i < _TRACES_PER_SEGMENT
-        # `visible` may be True/False or unset (None) — None counts as visible by default
+        is_full_block = i < 4
         if is_full_block:
             assert trace.visible is None or trace.visible is True
         else:
             assert trace.visible is False
+
+
+def test_scatter_dropdown_includes_dm_eq_and_dm_fi(bundle: DataBundle) -> None:
+    """Spec v2: scatter segment dropdown must expose 7 segments including DM_Eq/DM_FI."""
+    fig = scatter_vol_return(bundle)
+    labels = [btn.label for menu in fig.layout.updatemenus for btn in (menu.buttons or [])]
+    expected = ("Full", "DM", "EM", "DM_Eq", "EM_Eq", "DM_FI", "EM_FI")
+    for label in expected:
+        assert label in labels
+    assert len(labels) == len(expected)
 
 
 def test_scatter_beta_return_returns_figure(bundle: DataBundle) -> None:
