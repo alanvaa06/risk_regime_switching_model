@@ -10,3 +10,5 @@
 - decision: pandas .ewm(halflife, adjust=False).std() approximates RiskMetrics; mean-demeaned + sample-bias-corrected, numerically close to raw recursion for near-zero-mean daily returns.
 - decision: viz layer is a pure pipeline parallel to engine; CSV-in / HTML-out; Plotly bundled via CDN.
 - decision: per-series β vs cap-wtd global proxy lives in viz layer (roro/report/beta_vs_global.py), not engine.
+- decision: viz v2 uses scipy.stats.linregress for OLS+stderr; CI ribbon = upper trace (no fill) + lower trace (fill=tonexty) per color group.
+- decision: scatter dropdown exposes 7 segments (Full + 6 sub-segments); _TRACES_PER_SEGMENT=8 (markers + fit + ci_upper + ci_lower per DM and EM).
