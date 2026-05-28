@@ -1,4 +1,4 @@
-"""Thin Click CLI: `roro run`, `roro backtest`."""
+"""Thin Click CLI: `roro run`, `roro backtest`, `roro report`."""
 
 from __future__ import annotations
 
@@ -92,3 +92,61 @@ def cmd_backtest(config_path: Path, start: str, end: str, assert_gates: bool) ->
             "Acceptance gates failed; see backtest/acceptance_report.json"
         )
     click.echo("OK")
+
+
+@main.command("report")
+@click.option(
+    "--run-dir",
+    "run_dir",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    required=True,
+)
+@click.option(
+    "--xlsx",
+    "xlsx_path",
+    type=click.Path(exists=False, path_type=Path),
+    default=None,
+    help="Source xlsx. Defaults to snapshot.json's config_resolved.data_path.",
+)
+@click.option(
+    "--out",
+    "out_path",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Output HTML path. Defaults to <run-dir>/report.html.",
+)
+@click.option("--window", type=int, default=252)
+def cmd_report(
+    run_dir: Path,
+    xlsx_path: Path | None,
+    out_path: Path | None,
+    window: int,
+) -> None:
+    """Build interactive HTML report from an engine run directory."""
+    # Lazy import: report module pulls plotly, only needed here.
+    import json  # noqa: PLC0415
+
+    from roro.report import build_report  # noqa: PLC0415
+
+    snapshot_path = run_dir / "snapshot.json"
+    if xlsx_path is None:
+        if not snapshot_path.exists():
+            raise click.UsageError(
+                f"--xlsx not given and {snapshot_path} missing; cannot infer xlsx path."
+            )
+        snap = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        candidate = snap.get("config_resolved", {}).get("data_path")
+        if not candidate:
+            raise click.UsageError(
+                "--xlsx not given and snapshot.json has no config_resolved.data_path."
+            )
+        xlsx_path = Path(candidate)
+
+    if not xlsx_path.exists():
+        raise click.UsageError(f"xlsx file does not exist: {xlsx_path}")
+
+    if out_path is None:
+        out_path = run_dir / "report.html"
+
+    result = build_report(run_dir, xlsx_path, out_path, window=window)
+    click.echo(f"OK: {result}")
