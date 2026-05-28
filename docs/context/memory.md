@@ -8,3 +8,5 @@
 - decision: tripwire mirrors the main pipeline with 1M return window + 10d EWMA halflife.
 - decision: composite price series not yet wired into PriceFrame; internal consistency runs against empty composite frames in v1.0 — deferred to v1.1.
 - decision: pandas .ewm(halflife, adjust=False).std() approximates RiskMetrics; mean-demeaned + sample-bias-corrected, numerically close to raw recursion for near-zero-mean daily returns.
+- decision: viz layer is a pure pipeline parallel to engine; CSV-in / HTML-out; Plotly bundled via CDN.
+- decision: per-series β vs cap-wtd global proxy lives in viz layer (roro/report/beta_vs_global.py), not engine.
