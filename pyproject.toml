@@ -15,6 +15,7 @@ dependencies = [
     "pyyaml>=6.0,<7.0",
     "python-dotenv>=1.0,<2.0",
     "plotly>=5.20,<6.0",
+    "scipy>=1.11,<2.0",
 ]
 
 [project.optional-dependencies]
@@ -60,6 +61,10 @@ plugins = []
 
 [[tool.mypy.overrides]]
 module = ["fredapi.*", "plotly.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "scipy.*"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
