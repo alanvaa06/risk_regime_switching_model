@@ -50,10 +50,9 @@ def test_scatter_vol_return_axis_titles(bundle: DataBundle) -> None:
 
 
 def test_scatter_vol_return_traces_per_frame_invariant(bundle: DataBundle) -> None:
-    """Every frame has the same trace count: len(SCATTER_SEGMENTS) * _TRACES_PER_SEGMENT."""
+    """Every frame has the same trace count: 7 segments * 8 traces per segment = 56."""
     fig = scatter_vol_return(bundle)
-    # v2: 7 segments * 4 traces per segment (CI ribbon arrives in Task 5)
-    expected = 7 * 4
+    expected = 7 * 8
     for frame in fig.frames:
         assert len(frame.data) == expected
 
@@ -64,28 +63,28 @@ def test_scatter_vol_return_dropdown_toggles_visibility(bundle: DataBundle) -> N
     menus = list(fig.layout.updatemenus)
     assert len(menus) == 1
     buttons = list(menus[0].buttons)
-    n_segments = 7  # v2
-    expected_total = n_segments * 4  # CI traces arrive in Task 5
+    n_segments = 7
+    traces_per_segment = 8
+    expected_total = n_segments * traces_per_segment
     for idx, button in enumerate(buttons):
         restyle = button.args[0]
         visibility = list(restyle["visible"])
         assert len(visibility) == expected_total
-        assert sum(visibility) == 4
+        assert sum(visibility) == traces_per_segment
         for seg_idx in range(n_segments):
-            start = seg_idx * 4
-            end = start + 4
+            start = seg_idx * traces_per_segment
+            end = start + traces_per_segment
             block = visibility[start:end]
             assert all(block) if seg_idx == idx else not any(block)
 
 
 def test_scatter_vol_return_initial_visibility_is_full_only(bundle: DataBundle) -> None:
-    """Initial figure shows only the 'Full' segment's traces visible."""
+    """Initial figure shows only the 'Full' segment's 8 traces visible."""
     fig = scatter_vol_return(bundle)
     traces = list(fig.data)
-    # v2: 7 segments * 4 traces = 28 total
-    assert len(traces) == 7 * 4
+    assert len(traces) == 7 * 8
     for i, trace in enumerate(traces):
-        is_full_block = i < 4
+        is_full_block = i < 8
         if is_full_block:
             assert trace.visible is None or trace.visible is True
         else:
@@ -244,3 +243,90 @@ def test_ci_band_traces_upper_above_lower_at_every_point() -> None:
     u = np.asarray(upper.y, dtype=float)
     lo = np.asarray(lower.y, dtype=float)
     assert (u >= lo).all()
+
+
+def test_scatter_full_segment_has_ci_trace_positions(bundle: DataBundle) -> None:
+    """Structural check: CI upper/lower traces live at the right positions.
+
+    Trace order per segment (8 total): for each of DM and EM, in order:
+      markers, fit, ci_upper, ci_lower.
+    """
+    fig = scatter_vol_return(bundle)
+    full_block = list(fig.data[:8])
+    assert len(full_block) == 8
+    for ci_idx in (2, 3, 6, 7):
+        ci = full_block[ci_idx]
+        assert ci.mode == "lines"
+
+
+def test_scatter_ci_lower_uses_tonexty(bundle: DataBundle) -> None:
+    """Every ci_lower trace position uses fill='tonexty' (even empty placeholders)."""
+    fig = scatter_vol_return(bundle)
+    for seg_idx in range(7):
+        base = seg_idx * 8
+        dm_lo = fig.data[base + 3]
+        em_lo = fig.data[base + 7]
+        assert dm_lo.fill == "tonexty"
+        assert em_lo.fill == "tonexty"
+
+
+def test_scatter_traces_per_segment_constant() -> None:
+    """Public constant must reflect the v2 trace count."""
+    from roro.report.figures import _TRACES_PER_SEGMENT  # noqa: PLC0415
+    assert _TRACES_PER_SEGMENT == 8
+
+
+def test_scatter_ci_ribbon_populates_with_varied_data() -> None:
+    """When per-series x has nonzero variance, CI traces have populated 50-point arrays.
+
+    Builds a hand-crafted bundle with 3 DM and 3 EM series and varied vol/return
+    values so scipy.stats.linregress can compute non-degenerate slope/intercept.
+    """
+    import pandas as pd  # noqa: PLC0415
+
+    from roro.report.bundle import DataBundle  # noqa: PLC0415
+
+    dates = pd.date_range("2024-01-02", periods=5, freq="B")
+    series_ids = ["US_Eq", "DE_Eq", "FR_Eq", "BR_Eq", "MX_Eq", "AR_Eq"]
+    vol_data = {
+        "US_Eq": [0.10] * 5, "DE_Eq": [0.12] * 5, "FR_Eq": [0.15] * 5,
+        "BR_Eq": [0.25] * 5, "MX_Eq": [0.22] * 5, "AR_Eq": [0.30] * 5,
+    }
+    ret_data = {
+        "US_Eq": [0.05] * 5, "DE_Eq": [0.04] * 5, "FR_Eq": [0.03] * 5,
+        "BR_Eq": [0.02] * 5, "MX_Eq": [0.06] * 5, "AR_Eq": [-0.01] * 5,
+    }
+    vol = pd.DataFrame(vol_data, index=dates)
+    ret = pd.DataFrame(ret_data, index=dates)
+    beta = vol.copy()
+    meta = pd.DataFrame(
+        [
+            {"country": "United States", "asset": "Eq", "segment": "DM", "weight": 100.0},
+            {"country": "Germany",       "asset": "Eq", "segment": "DM", "weight": 50.0},
+            {"country": "France",        "asset": "Eq", "segment": "DM", "weight": 30.0},
+            {"country": "Brazil",        "asset": "Eq", "segment": "EM", "weight": 10.0},
+            {"country": "Mexico",        "asset": "Eq", "segment": "EM", "weight": 8.0},
+            {"country": "Argentina",     "asset": "Eq", "segment": "EM", "weight": 5.0},
+        ],
+        index=pd.Index(series_ids, name="series_id"),
+    )
+    seg_beta = pd.DataFrame({"global": [1.0] * 5}, index=dates)
+    seg_tercile = pd.DataFrame({"global": ["Transitional"] * 5}, index=dates)
+    test_bundle = DataBundle(
+        run_date=pd.Timestamp("2024-01-08"),
+        methodology_version="1.0.0",
+        dates=pd.DatetimeIndex(dates),
+        vol=vol,
+        ret_3m=ret,
+        beta_vs_global=beta,
+        meta=meta,
+        seg_beta=seg_beta,
+        seg_tercile=seg_tercile,
+    )
+
+    fig = scatter_vol_return(test_bundle)
+    full_block = list(fig.data[:8])
+    dm_ci_upper = full_block[2]
+    em_ci_upper = full_block[6]
+    assert len(dm_ci_upper.x) == 50, "DM CI upper should have 50 points when var(x) > 0"
+    assert len(em_ci_upper.x) == 50, "EM CI upper should have 50 points when var(x) > 0"

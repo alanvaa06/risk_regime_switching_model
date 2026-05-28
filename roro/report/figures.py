@@ -19,8 +19,7 @@ SCATTER_SEGMENTS: tuple[SegmentFilter, ...] = (
 COLOR_DM: str = "#1f77b4"
 COLOR_EM: str = "#2ca02c"
 
-_MIN_OBS_FOR_OLS: int = 2
-_TRACES_PER_SEGMENT: int = 4  # DM markers + DM fit + EM markers + EM fit
+_TRACES_PER_SEGMENT: int = 8  # per color group: markers + fit + ci_upper + ci_lower; 2 groups
 _CI_Z: float = 1.96
 _MIN_OBS_FOR_CI: int = 3
 _CI_BAND_POINTS: int = 50
@@ -43,22 +42,6 @@ def _series_for_segment(meta: pd.DataFrame, segment: SegmentFilter) -> list[str]
     if segment == "DM_FI":
         return list(meta.index[(meta["segment"] == "DM") & (meta["asset"] == "FI")])
     raise ValueError(f"Unknown segment: {segment}")
-
-
-def _ols_slope_intercept(
-    x: np.ndarray[tuple[int, ...], np.dtype[np.float64]],
-    y: np.ndarray[tuple[int, ...], np.dtype[np.float64]],
-) -> tuple[float, float]:
-    """Plain OLS y = a*x + b; returns (slope, intercept). Empty/degenerate input -> (nan, nan)."""
-    mask = np.isfinite(x) & np.isfinite(y)
-    if mask.sum() < _MIN_OBS_FOR_OLS:
-        return float("nan"), float("nan")
-    xv, yv = x[mask], y[mask]
-    # Degenerate x (zero variance) yields a rank-deficient fit; skip silently.
-    if np.ptp(xv) == 0.0:
-        return float("nan"), float("nan")
-    slope, intercept = np.polyfit(xv, yv, 1)
-    return float(slope), float(intercept)
 
 
 def _ols_with_ci(
@@ -155,10 +138,12 @@ def _scatter_traces_for_date(
     date: pd.Timestamp,
     segment: SegmentFilter,
 ) -> list[go.Scatter]:
-    """Build exactly _TRACES_PER_SEGMENT traces for one (date, segment).
+    """Build exactly _TRACES_PER_SEGMENT (=8) traces for one (date, segment).
 
-    Output order: [DM markers, DM fit, EM markers, EM fit]. Empty partitions
-    yield empty-array Scatter placeholders so the trace count is invariant.
+    Output order: for each of (DM, EM) in order:
+      [markers, fit, ci_upper, ci_lower].
+    Empty partitions yield empty-array Scatter placeholders so the trace count
+    is invariant across frames.
     """
     series_ids = _series_for_segment(bundle.meta, segment)
     sub = bundle.meta.loc[series_ids]
@@ -168,71 +153,126 @@ def _scatter_traces_for_date(
     for color_label, color in (("DM", COLOR_DM), ("EM", COLOR_EM)):
         group_ids = list(sub.index[sub["segment"] == color_label])
         if not group_ids:
-            traces.append(
-                go.Scatter(
-                    x=[],
-                    y=[],
-                    mode="markers",
-                    marker={"color": color, "size": 8},
-                    name=f"{segment}:{color_label}",
-                    hoverinfo="skip",
-                )
-            )
-            traces.append(
-                go.Scatter(
-                    x=[],
-                    y=[],
-                    mode="lines",
-                    line={"color": color, "dash": "dash"},
-                    name=f"{segment}:{color_label} fit",
-                    showlegend=False,
-                    hoverinfo="skip",
-                )
-            )
+            traces.extend(_empty_color_group_traces(segment, color_label, color))
             continue
         x = x_row.reindex(group_ids).to_numpy(dtype=float)
         y = y_row.reindex(group_ids).to_numpy(dtype=float)
         valid = np.isfinite(x) & np.isfinite(y)
         countries = sub.loc[group_ids, "country"].to_numpy()
         assets = sub.loc[group_ids, "asset"].to_numpy()
+        # Marker trace (1 of 4 per color group)
         traces.append(
             go.Scatter(
                 x=x[valid],
                 y=y[valid],
                 mode="markers",
-                marker={"color": color, "size": 8},
+                marker={
+                    "color": color,
+                    "size": 9,
+                    "opacity": 0.85,
+                    "line": {"color": "white", "width": 1},
+                },
                 name=f"{segment}:{color_label}",
-                text=[f"{c}_{a}" for c, a in zip(countries[valid], assets[valid], strict=True)],
+                text=[
+                    f"{c}_{a}"
+                    for c, a in zip(countries[valid], assets[valid], strict=True)
+                ],
                 hovertemplate="%{text}<br>x=%{x:.4f}<br>y=%{y:.4f}<extra></extra>",
             )
         )
-        slope, intercept = _ols_slope_intercept(x[valid], y[valid])
-        if np.isfinite(slope) and valid.any():
-            x_line = np.array([np.nanmin(x[valid]), np.nanmax(x[valid])])
-            traces.append(
-                go.Scatter(
-                    x=x_line,
-                    y=slope * x_line + intercept,
-                    mode="lines",
-                    line={"color": color, "dash": "dash"},
-                    name=f"{segment}:{color_label} fit",
-                    showlegend=False,
-                    hoverinfo="skip",
-                )
+        # Fit + CI traces (3 of 4 per color group)
+        fit_result = _ols_with_ci(x[valid], y[valid])
+        if fit_result is None:
+            traces.extend(_empty_fit_and_ci_traces(segment, color_label, color))
+            continue
+        slope, intercept, se_slope, se_intercept = fit_result
+        xv = x[valid]
+        x_lo, x_hi = float(np.nanmin(xv)), float(np.nanmax(xv))
+        # Fit line (2 of 4)
+        x_line = np.array([x_lo, x_hi])
+        traces.append(
+            go.Scatter(
+                x=x_line,
+                y=slope * x_line + intercept,
+                mode="lines",
+                line={"color": color, "dash": "dash"},
+                name=f"{segment}:{color_label} fit",
+                showlegend=False,
+                hoverinfo="skip",
             )
-        else:
-            traces.append(
-                go.Scatter(
-                    x=[],
-                    y=[],
-                    mode="lines",
-                    line={"color": color, "dash": "dash"},
-                    name=f"{segment}:{color_label} fit",
-                    showlegend=False,
-                    hoverinfo="skip",
-                )
-            )
+        )
+        # CI upper + lower (3 + 4 of 4)
+        upper, lower = _ci_band_traces(
+            slope=slope,
+            intercept=intercept,
+            se_slope=se_slope,
+            se_intercept=se_intercept,
+            mean_x=float(np.mean(xv)),
+            x_range=(x_lo, x_hi),
+            color=color,
+        )
+        traces.append(upper)
+        traces.append(lower)
     return traces
+
+
+def _empty_color_group_traces(
+    segment: SegmentFilter, color_label: str, color: str
+) -> list[go.Scatter]:
+    """Four empty-array placeholders for an absent color group."""
+    return [
+        go.Scatter(
+            x=[],
+            y=[],
+            mode="markers",
+            marker={
+                "color": color,
+                "size": 9,
+                "opacity": 0.85,
+                "line": {"color": "white", "width": 1},
+            },
+            name=f"{segment}:{color_label}",
+            hoverinfo="skip",
+        ),
+        *_empty_fit_and_ci_traces(segment, color_label, color),
+    ]
+
+
+def _empty_fit_and_ci_traces(
+    segment: SegmentFilter, color_label: str, color: str
+) -> list[go.Scatter]:
+    """Three empty-array placeholders: fit line, ci_upper, ci_lower."""
+    return [
+        go.Scatter(
+            x=[],
+            y=[],
+            mode="lines",
+            line={"color": color, "dash": "dash"},
+            name=f"{segment}:{color_label} fit",
+            showlegend=False,
+            hoverinfo="skip",
+        ),
+        go.Scatter(
+            x=[],
+            y=[],
+            mode="lines",
+            line={"color": color, "width": 0},
+            name="ci_upper",
+            showlegend=False,
+            hoverinfo="skip",
+        ),
+        go.Scatter(
+            x=[],
+            y=[],
+            mode="lines",
+            line={"color": color, "width": 0},
+            fill="tonexty",
+            fillcolor=_hex_to_rgba(color, alpha=0.18),
+            name="ci_lower",
+            showlegend=False,
+            hoverinfo="skip",
+        ),
+    ]
 
 
 def _all_segment_traces_for_date(
