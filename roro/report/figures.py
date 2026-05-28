@@ -357,8 +357,31 @@ def _build_scatter(
         data=initial_traces,
         layout=go.Layout(
             title=f"{title_prefix} — {dates[-1].date()} — Full",
-            xaxis={"title": x_title, "range": [x_min - x_pad, x_max + x_pad]},
-            yaxis={"title": y_title, "range": [y_min - y_pad, y_max + y_pad]},
+            height=700,
+            template="simple_white",
+            font={"family": "system-ui, -apple-system, sans-serif", "size": 13},
+            margin={"l": 60, "r": 200, "t": 60, "b": 120},
+            xaxis={
+                "title": x_title,
+                "range": [x_min - x_pad, x_max + x_pad],
+                "showgrid": True,
+                "gridcolor": "#e6e6e6",
+                "zeroline": False,
+            },
+            yaxis={
+                "title": y_title,
+                "range": [y_min - y_pad, y_max + y_pad],
+                "showgrid": True,
+                "gridcolor": "#e6e6e6",
+                "zeroline": False,
+            },
+            legend={
+                "orientation": "h",
+                "yanchor": "bottom",
+                "y": -0.20,
+                "xanchor": "center",
+                "x": 0.5,
+            },
             sliders=[
                 {
                     "active": len(dates) - 1,
@@ -371,13 +394,12 @@ def _build_scatter(
                     "type": "dropdown",
                     "showactive": True,
                     "buttons": segment_buttons,
-                    "x": 1.02,
+                    "x": 1.12,
                     "y": 1.0,
                     "xanchor": "left",
                     "yanchor": "top",
                 }
             ],
-            template="plotly_white",
         ),
         frames=frames,
     )

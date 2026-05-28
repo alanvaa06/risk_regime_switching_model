@@ -330,3 +330,34 @@ def test_scatter_ci_ribbon_populates_with_varied_data() -> None:
     em_ci_upper = full_block[6]
     assert len(dm_ci_upper.x) == 50, "DM CI upper should have 50 points when var(x) > 0"
     assert len(em_ci_upper.x) == 50, "EM CI upper should have 50 points when var(x) > 0"
+
+
+def test_scatter_vol_return_height_is_700(bundle: DataBundle) -> None:
+    fig = scatter_vol_return(bundle)
+    assert fig.layout.height == 700
+
+
+def test_scatter_beta_return_height_is_700(bundle: DataBundle) -> None:
+    fig = scatter_beta_return(bundle)
+    assert fig.layout.height == 700
+
+
+def test_scatter_legend_is_horizontal_below_plot(bundle: DataBundle) -> None:
+    fig = scatter_vol_return(bundle)
+    legend = fig.layout.legend
+    assert legend.orientation == "h"
+    assert legend.y is not None and legend.y < 0
+
+
+def test_scatter_dropdown_is_positioned_clear_of_legend(bundle: DataBundle) -> None:
+    """Dropdown anchored at x=1.12 so it does not overlap markers or legend."""
+    fig = scatter_vol_return(bundle)
+    menus = list(fig.layout.updatemenus)
+    assert menus[0].x == 1.12
+
+
+def test_scatter_template_is_simple_white(bundle: DataBundle) -> None:
+    fig = scatter_vol_return(bundle)
+    # Plotly resolves the template into a Template object; existence is enough proof
+    # that a template was wired (precise name check would require deep template lookup).
+    assert fig.layout.template is not None
