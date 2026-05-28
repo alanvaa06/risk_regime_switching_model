@@ -299,6 +299,28 @@ def _visibility_mask(active: SegmentFilter) -> list[bool]:
     return mask
 
 
+def _segment_axis_range(
+    panel: pd.DataFrame,
+    segment: SegmentFilter,
+    meta: pd.DataFrame,
+) -> tuple[float, float]:
+    """Compute (lo, hi) range for a panel restricted to one segment's series.
+
+    Returns the panel's nanmin/nanmax over the segment's columns with 5% padding.
+    Falls back to the panel's global min/max if the segment slice is empty or
+    all-NaN.
+    """
+    series_ids = _series_for_segment(meta, segment)
+    present = [c for c in series_ids if c in panel.columns]
+    sub = panel[present].to_numpy(dtype=float) if present else panel.to_numpy(dtype=float)
+    if not np.isfinite(sub).any():
+        sub = panel.to_numpy(dtype=float)
+    lo = float(np.nanmin(sub))
+    hi = float(np.nanmax(sub))
+    pad = 0.05 * (hi - lo if hi > lo else 1.0)
+    return lo - pad, hi + pad
+
+
 def _build_scatter(
     bundle: DataBundle,
     x_panel: pd.DataFrame,
@@ -324,13 +346,9 @@ def _build_scatter(
             )
         )
 
-    # Fixed axis ranges from global panel min/max with 5% padding
-    x_all = x_panel.to_numpy(dtype=float)
-    y_all = y_panel.to_numpy(dtype=float)
-    x_min, x_max = np.nanmin(x_all), np.nanmax(x_all)
-    y_min, y_max = np.nanmin(y_all), np.nanmax(y_all)
-    x_pad = 0.05 * (x_max - x_min if x_max > x_min else 1.0)
-    y_pad = 0.05 * (y_max - y_min if y_max > y_min else 1.0)
+    # Per-segment fixed axis ranges (retighten when a sub-segment is selected).
+    init_x_lo, init_x_hi = _segment_axis_range(x_panel, default_segment, bundle.meta)
+    init_y_lo, init_y_hi = _segment_axis_range(y_panel, default_segment, bundle.meta)
 
     slider_steps = [
         {
@@ -341,17 +359,24 @@ def _build_scatter(
         for d in dates
     ]
 
-    segment_buttons = [
-        {
-            "method": "update",
-            "label": seg,
-            "args": [
-                {"visible": _visibility_mask(seg)},
-                {"title": f"{title_prefix} — {dates[-1].date()} — {seg}"},
-            ],
-        }
-        for seg in SCATTER_SEGMENTS
-    ]
+    segment_buttons = []
+    for seg in SCATTER_SEGMENTS:
+        seg_x_lo, seg_x_hi = _segment_axis_range(x_panel, seg, bundle.meta)
+        seg_y_lo, seg_y_hi = _segment_axis_range(y_panel, seg, bundle.meta)
+        segment_buttons.append(
+            {
+                "method": "update",
+                "label": seg,
+                "args": [
+                    {"visible": _visibility_mask(seg)},
+                    {
+                        "title": f"{title_prefix} — {dates[-1].date()} — {seg}",
+                        "xaxis.range": [seg_x_lo, seg_x_hi],
+                        "yaxis.range": [seg_y_lo, seg_y_hi],
+                    },
+                ],
+            }
+        )
 
     fig = go.Figure(
         data=initial_traces,
@@ -363,14 +388,14 @@ def _build_scatter(
             margin={"l": 60, "r": 200, "t": 60, "b": 120},
             xaxis={
                 "title": x_title,
-                "range": [x_min - x_pad, x_max + x_pad],
+                "range": [init_x_lo, init_x_hi],
                 "showgrid": True,
                 "gridcolor": "#e6e6e6",
                 "zeroline": False,
             },
             yaxis={
                 "title": y_title,
-                "range": [y_min - y_pad, y_max + y_pad],
+                "range": [init_y_lo, init_y_hi],
                 "showgrid": True,
                 "gridcolor": "#e6e6e6",
                 "zeroline": False,

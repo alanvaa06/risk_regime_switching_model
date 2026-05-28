@@ -385,3 +385,76 @@ def test_beta_timeseries_x_axis_uses_full_seg_beta_index(bundle: DataBundle) -> 
     line = fig.data[0]
     assert len(line.x) == len(bundle.seg_beta.index)
     assert len(line.x) > len(bundle.dates)
+
+
+def test_scatter_segment_buttons_carry_per_segment_axis_ranges(bundle: DataBundle) -> None:
+    """Each of the 7 scatter buttons sets non-degenerate per-segment x/y axis ranges."""
+    fig = scatter_vol_return(bundle)
+    buttons = list(fig.layout.updatemenus[0].buttons)
+    assert len(buttons) == 7
+    for button in buttons:
+        layout_update = button.args[1]
+        x_range = layout_update["xaxis.range"]
+        y_range = layout_update["yaxis.range"]
+        assert len(x_range) == 2 and x_range[1] > x_range[0]
+        assert len(y_range) == 2 and y_range[1] > y_range[0]
+
+
+def test_scatter_segment_ranges_differ_with_varied_data() -> None:
+    """A narrow sub-segment retightens its range vs Full when data has cross-sectional spread.
+
+    The shared tiny_xlsx fixture synthesizes identical prices across countries (zero
+    cross-sectional variance), so every segment's range would collapse to the same
+    degenerate padded range. This test builds a bundle with deliberately varied vol so
+    Full's range is wider than the EM_Eq sub-segment's range.
+    """
+    import pandas as pd  # noqa: PLC0415
+
+    from roro.report.bundle import DataBundle  # noqa: PLC0415
+
+    dates = pd.date_range("2024-01-02", periods=5, freq="B")
+    series_ids = ["US_Eq", "US_FI", "DE_Eq", "DE_FI", "BR_Eq", "BR_FI", "MX_Eq", "MX_FI"]
+    # DM vol spread is wide (0.05..0.40); EM_Eq vol is a narrow band (0.20..0.23).
+    vol_cols = {
+        "US_Eq": 0.05, "US_FI": 0.40, "DE_Eq": 0.10, "DE_FI": 0.35,
+        "BR_Eq": 0.20, "BR_FI": 0.15, "MX_Eq": 0.23, "MX_FI": 0.18,
+    }
+    ret_cols = {sid: 0.01 * i for i, sid in enumerate(series_ids)}
+    vol = pd.DataFrame({sid: [v] * 5 for sid, v in vol_cols.items()}, index=dates)
+    ret = pd.DataFrame({sid: [v] * 5 for sid, v in ret_cols.items()}, index=dates)
+    beta = vol.copy()
+    meta = pd.DataFrame(
+        [
+            {"country": "United States", "asset": "Eq", "segment": "DM", "weight": 100.0},
+            {"country": "United States", "asset": "FI", "segment": "DM", "weight": 90.0},
+            {"country": "Germany",       "asset": "Eq", "segment": "DM", "weight": 50.0},
+            {"country": "Germany",       "asset": "FI", "segment": "DM", "weight": 40.0},
+            {"country": "Brazil",        "asset": "Eq", "segment": "EM", "weight": 10.0},
+            {"country": "Brazil",        "asset": "FI", "segment": "EM", "weight": 8.0},
+            {"country": "Mexico",        "asset": "Eq", "segment": "EM", "weight": 6.0},
+            {"country": "Mexico",        "asset": "FI", "segment": "EM", "weight": 5.0},
+        ],
+        index=pd.Index(series_ids, name="series_id"),
+    )
+    seg_beta = pd.DataFrame({"global": [1.0] * 5}, index=dates)
+    seg_tercile = pd.DataFrame({"global": ["Transitional"] * 5}, index=dates)
+    test_bundle = DataBundle(
+        run_date=pd.Timestamp("2024-01-08"),
+        methodology_version="1.0.0",
+        dates=pd.DatetimeIndex(dates),
+        vol=vol,
+        ret_3m=ret,
+        beta_vs_global=beta,
+        meta=meta,
+        seg_beta=seg_beta,
+        seg_tercile=seg_tercile,
+    )
+
+    fig = scatter_vol_return(test_bundle)
+    buttons = {b.label: b.args[1] for b in fig.layout.updatemenus[0].buttons}
+    full_x = buttons["Full"]["xaxis.range"]
+    em_eq_x = buttons["EM_Eq"]["xaxis.range"]
+    full_width = full_x[1] - full_x[0]
+    em_eq_width = em_eq_x[1] - em_eq_x[0]
+    # EM_Eq (vol 0.20, 0.23) is a tighter band than Full (0.05..0.40).
+    assert em_eq_width < full_width
