@@ -269,3 +269,143 @@ def scatter_beta_return(bundle: DataBundle) -> go.Figure:
         y_title="3M total log return",
         title_prefix="Beta vs Return",
     )
+
+
+BETA_TS_SEGMENTS: tuple[str, ...] = (
+    "global",
+    "DM",
+    "EM",
+    "EM_Eq",
+    "EM_FI",
+    "DM_Eq",
+    "DM_FI",
+    "LatAm",
+)
+
+REGIME_COLORS: dict[str, str] = {
+    "Risk-off": "rgba(220, 50, 47, 0.12)",
+    "Transitional": "rgba(128, 128, 128, 0.06)",
+    "Risk-on": "rgba(46, 160, 67, 0.12)",
+}
+
+
+def _regime_runs(labels: pd.Series) -> list[tuple[pd.Timestamp, pd.Timestamp, str]]:
+    """Compress a date-indexed label series into consecutive runs of identical labels."""
+    s = labels.dropna()
+    if s.empty:
+        return []
+    runs: list[tuple[pd.Timestamp, pd.Timestamp, str]] = []
+    current_label = s.iloc[0]
+    run_start = s.index[0]
+    prev_date = s.index[0]
+    for d, label in s.iloc[1:].items():
+        if label != current_label:
+            runs.append((run_start, prev_date, str(current_label)))
+            current_label = label
+            run_start = d
+        prev_date = d
+    runs.append((run_start, prev_date, str(current_label)))
+    return runs
+
+
+def beta_timeseries(bundle: DataBundle) -> go.Figure:
+    """Segment β line over `dates` with tercile bands shaded.
+
+    Segment dropdown switches both the line trace and the background vrects.
+    """
+    default_segment = "global"
+    available = [s for s in BETA_TS_SEGMENTS if s in bundle.seg_beta.columns]
+    if default_segment not in available:
+        default_segment = available[0]
+
+    # Initial trace + shapes
+    initial_line = go.Scatter(
+        x=bundle.dates,
+        y=bundle.seg_beta[default_segment].to_numpy(dtype=float),
+        mode="lines",
+        line={"color": "#222", "width": 2},
+        name=default_segment,
+        hovertemplate="%{x|%Y-%m-%d}<br>β=%{y:.3f}<extra></extra>",
+    )
+
+    initial_shapes = []
+    if default_segment in bundle.seg_tercile.columns:
+        for start, end, label in _regime_runs(bundle.seg_tercile[default_segment]):
+            color = REGIME_COLORS.get(label)
+            if color is None:
+                continue
+            initial_shapes.append(
+                {
+                    "type": "rect",
+                    "xref": "x",
+                    "yref": "paper",
+                    "x0": start,
+                    "x1": end,
+                    "y0": 0,
+                    "y1": 1,
+                    "fillcolor": color,
+                    "line": {"width": 0},
+                    "layer": "below",
+                }
+            )
+
+    # Dropdown buttons: each button updates trace y, name, title, and shapes
+    buttons = []
+    for seg in available:
+        y = bundle.seg_beta[seg].to_numpy(dtype=float)
+        shapes: list[dict[str, object]] = []
+        if seg in bundle.seg_tercile.columns:
+            for start, end, label in _regime_runs(bundle.seg_tercile[seg]):
+                color = REGIME_COLORS.get(label)
+                if color is None:
+                    continue
+                shapes.append(
+                    {
+                        "type": "rect",
+                        "xref": "x",
+                        "yref": "paper",
+                        "x0": start,
+                        "x1": end,
+                        "y0": 0,
+                        "y1": 1,
+                        "fillcolor": color,
+                        "line": {"width": 0},
+                        "layer": "below",
+                    }
+                )
+        buttons.append(
+            {
+                "method": "update",
+                "label": seg,
+                "args": [
+                    {"y": [y], "name": [seg]},
+                    {
+                        "title": f"Segment β with regime bands — {seg}",
+                        "shapes": shapes,
+                    },
+                ],
+            }
+        )
+
+    fig = go.Figure(
+        data=[initial_line],
+        layout=go.Layout(
+            title=f"Segment β with regime bands — {default_segment}",
+            xaxis={"title": "Date"},
+            yaxis={"title": "Cap-weighted β"},
+            shapes=initial_shapes,
+            updatemenus=[
+                {
+                    "type": "dropdown",
+                    "showactive": True,
+                    "buttons": buttons,
+                    "x": 1.02,
+                    "y": 1.0,
+                    "xanchor": "left",
+                    "yanchor": "top",
+                }
+            ],
+            template="plotly_white",
+        ),
+    )
+    return fig

@@ -9,7 +9,9 @@ import pytest
 from roro.report.bundle import DataBundle
 from roro.report.figures import (
     _TRACES_PER_SEGMENT,
+    BETA_TS_SEGMENTS,
     SCATTER_SEGMENTS,
+    beta_timeseries,
     scatter_beta_return,
     scatter_vol_return,
 )
@@ -103,3 +105,29 @@ def test_scatter_beta_return_x_title_mentions_beta(bundle: DataBundle) -> None:
 def test_scatter_beta_return_title_prefix(bundle: DataBundle) -> None:
     fig = scatter_beta_return(bundle)
     assert fig.layout.title.text.startswith("Beta vs Return")
+
+
+def test_beta_timeseries_returns_figure(bundle: DataBundle) -> None:
+    fig = beta_timeseries(bundle)
+    assert isinstance(fig, go.Figure)
+
+
+def test_beta_timeseries_has_segment_dropdown(bundle: DataBundle) -> None:
+    fig = beta_timeseries(bundle)
+    labels = [btn.label for menu in fig.layout.updatemenus for btn in (menu.buttons or [])]
+    available = [s for s in BETA_TS_SEGMENTS if s in bundle.seg_beta.columns]
+    for expected in available:
+        assert expected in labels
+
+
+def test_beta_timeseries_has_shading_shapes(bundle: DataBundle) -> None:
+    fig = beta_timeseries(bundle)
+    # vrects render as 'rect' shapes
+    rects = [s for s in (fig.layout.shapes or []) if s.type == "rect"]
+    # At minimum one rect should exist whenever the segment has any tercile labels
+    assert len(rects) >= 1
+
+
+def test_beta_timeseries_y_axis_label(bundle: DataBundle) -> None:
+    fig = beta_timeseries(bundle)
+    assert "β" in fig.layout.yaxis.title.text or "beta" in fig.layout.yaxis.title.text.lower()
