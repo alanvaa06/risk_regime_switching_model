@@ -17,6 +17,7 @@ COLOR_DM: str = "#1f77b4"
 COLOR_EM: str = "#ff7f0e"
 
 _MIN_OBS_FOR_OLS: int = 2
+_TRACES_PER_SEGMENT: int = 4  # DM markers + DM fit + EM markers + EM fit
 
 
 def _series_for_segment(meta: pd.DataFrame, segment: SegmentFilter) -> list[str]:
@@ -38,11 +39,14 @@ def _ols_slope_intercept(
     x: np.ndarray[tuple[int, ...], np.dtype[np.float64]],
     y: np.ndarray[tuple[int, ...], np.dtype[np.float64]],
 ) -> tuple[float, float]:
-    """Plain OLS y = a*x + b; returns (slope, intercept). Empty input -> (nan, nan)."""
+    """Plain OLS y = a*x + b; returns (slope, intercept). Empty/degenerate input -> (nan, nan)."""
     mask = np.isfinite(x) & np.isfinite(y)
     if mask.sum() < _MIN_OBS_FOR_OLS:
         return float("nan"), float("nan")
     xv, yv = x[mask], y[mask]
+    # Degenerate x (zero variance) yields a rank-deficient fit; skip silently.
+    if np.ptp(xv) == 0.0:
+        return float("nan"), float("nan")
     slope, intercept = np.polyfit(xv, yv, 1)
     return float(slope), float(intercept)
 
@@ -54,7 +58,11 @@ def _scatter_traces_for_date(
     date: pd.Timestamp,
     segment: SegmentFilter,
 ) -> list[go.Scatter]:
-    """Build traces (markers + trend lines) for one (date, segment)."""
+    """Build exactly _TRACES_PER_SEGMENT traces for one (date, segment).
+
+    Output order: [DM markers, DM fit, EM markers, EM fit]. Empty partitions
+    yield empty-array Scatter placeholders so the trace count is invariant.
+    """
     series_ids = _series_for_segment(bundle.meta, segment)
     sub = bundle.meta.loc[series_ids]
     x_row = x_panel.loc[date]
@@ -63,6 +71,27 @@ def _scatter_traces_for_date(
     for color_label, color in (("DM", COLOR_DM), ("EM", COLOR_EM)):
         group_ids = list(sub.index[sub["segment"] == color_label])
         if not group_ids:
+            traces.append(
+                go.Scatter(
+                    x=[],
+                    y=[],
+                    mode="markers",
+                    marker={"color": color, "size": 8},
+                    name=f"{segment}:{color_label}",
+                    hoverinfo="skip",
+                )
+            )
+            traces.append(
+                go.Scatter(
+                    x=[],
+                    y=[],
+                    mode="lines",
+                    line={"color": color, "dash": "dash"},
+                    name=f"{segment}:{color_label} fit",
+                    showlegend=False,
+                    hoverinfo="skip",
+                )
+            )
             continue
         x = x_row.reindex(group_ids).to_numpy(dtype=float)
         y = y_row.reindex(group_ids).to_numpy(dtype=float)
@@ -75,13 +104,13 @@ def _scatter_traces_for_date(
                 y=y[valid],
                 mode="markers",
                 marker={"color": color, "size": 8},
-                name=color_label,
+                name=f"{segment}:{color_label}",
                 text=[f"{c}_{a}" for c, a in zip(countries[valid], assets[valid], strict=True)],
                 hovertemplate="%{text}<br>x=%{x:.4f}<br>y=%{y:.4f}<extra></extra>",
             )
         )
         slope, intercept = _ols_slope_intercept(x[valid], y[valid])
-        if np.isfinite(slope):
+        if np.isfinite(slope) and valid.any():
             x_line = np.array([np.nanmin(x[valid]), np.nanmax(x[valid])])
             traces.append(
                 go.Scatter(
@@ -89,12 +118,48 @@ def _scatter_traces_for_date(
                     y=slope * x_line + intercept,
                     mode="lines",
                     line={"color": color, "dash": "dash"},
-                    name=f"{color_label} fit",
+                    name=f"{segment}:{color_label} fit",
+                    showlegend=False,
+                    hoverinfo="skip",
+                )
+            )
+        else:
+            traces.append(
+                go.Scatter(
+                    x=[],
+                    y=[],
+                    mode="lines",
+                    line={"color": color, "dash": "dash"},
+                    name=f"{segment}:{color_label} fit",
                     showlegend=False,
                     hoverinfo="skip",
                 )
             )
     return traces
+
+
+def _all_segment_traces_for_date(
+    bundle: DataBundle,
+    x_panel: pd.DataFrame,
+    y_panel: pd.DataFrame,
+    date: pd.Timestamp,
+) -> list[go.Scatter]:
+    """Concatenate traces for every segment in SCATTER_SEGMENTS, in order."""
+    traces: list[go.Scatter] = []
+    for seg in SCATTER_SEGMENTS:
+        traces.extend(_scatter_traces_for_date(bundle, x_panel, y_panel, date, seg))
+    return traces
+
+
+def _visibility_mask(active: SegmentFilter) -> list[bool]:
+    """Return a visibility list of length len(SCATTER_SEGMENTS) * _TRACES_PER_SEGMENT.
+
+    Active segment's traces are True; everything else False.
+    """
+    mask: list[bool] = []
+    for seg in SCATTER_SEGMENTS:
+        mask.extend([seg == active] * _TRACES_PER_SEGMENT)
+    return mask
 
 
 def _build_scatter(
@@ -109,14 +174,16 @@ def _build_scatter(
     dates = bundle.dates
     default_segment: SegmentFilter = "Full"
 
-    initial_traces = _scatter_traces_for_date(bundle, x_panel, y_panel, dates[-1], default_segment)
+    initial_traces = _all_segment_traces_for_date(bundle, x_panel, y_panel, dates[-1])
+    for visible, trace in zip(_visibility_mask(default_segment), initial_traces, strict=True):
+        trace.visible = visible
 
     frames: list[go.Frame] = []
     for d in dates:
         frames.append(
             go.Frame(
                 name=str(d.date()),
-                data=_scatter_traces_for_date(bundle, x_panel, y_panel, d, default_segment),
+                data=_all_segment_traces_for_date(bundle, x_panel, y_panel, d),
             )
         )
 
@@ -139,11 +206,11 @@ def _build_scatter(
 
     segment_buttons = [
         {
-            "method": "animate",
+            "method": "update",
             "label": seg,
             "args": [
-                None,
-                {"frame": {"duration": 0}, "mode": "immediate", "_seg": seg},
+                {"visible": _visibility_mask(seg)},
+                {"title": f"{title_prefix} — {dates[-1].date()} — {seg}"},
             ],
         }
         for seg in SCATTER_SEGMENTS
