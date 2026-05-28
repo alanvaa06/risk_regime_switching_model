@@ -15,8 +15,8 @@ def _write_minimal_run_dir(tmp_path: Path, xlsx_path: Path) -> Path:
     run.mkdir()
 
     snapshot = {
-        "run_date": "2024-03-29",
-        "as_of_data_date": "2024-03-28",
+        "run_date": "2024-12-31",
+        "as_of_data_date": "2024-12-30",
         "methodology_version": "1.0.0",
         "config_resolved": {"data_path": str(xlsx_path)},
         "data_fingerprint": {},
@@ -25,7 +25,7 @@ def _write_minimal_run_dir(tmp_path: Path, xlsx_path: Path) -> Path:
     }
     (run / "snapshot.json").write_text(json.dumps(snapshot), encoding="utf-8")
 
-    dates = pd.bdate_range("2024-01-02", "2024-03-29")
+    dates = pd.bdate_range("2020-01-02", "2024-12-31")
     beta_rows = []
     for d in dates:
         for seg in ("global", "DM", "EM", "EM_Eq", "EM_FI"):
