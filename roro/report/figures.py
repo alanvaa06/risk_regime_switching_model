@@ -385,7 +385,7 @@ def _build_scatter(
             height=700,
             template="simple_white",
             font={"family": "system-ui, -apple-system, sans-serif", "size": 13},
-            margin={"l": 60, "r": 200, "t": 60, "b": 120},
+            margin={"l": 60, "r": 200, "t": 60, "b": 140},
             xaxis={
                 "title": x_title,
                 "range": [init_x_lo, init_x_hi],
@@ -401,17 +401,22 @@ def _build_scatter(
                 "zeroline": False,
             },
             legend={
-                "orientation": "h",
-                "yanchor": "bottom",
-                "y": -0.20,
-                "xanchor": "center",
-                "x": 0.5,
+                "orientation": "v",
+                "yanchor": "top",
+                "y": 0.98,
+                "xanchor": "left",
+                "x": 0.02,
+                "bgcolor": "rgba(255, 255, 255, 0.75)",
+                "bordercolor": "#cccccc",
+                "borderwidth": 1,
             },
             sliders=[
                 {
                     "active": len(dates) - 1,
                     "currentvalue": {"prefix": "Date: "},
                     "steps": slider_steps,
+                    "y": -0.18,
+                    "pad": {"t": 30, "b": 10},
                 }
             ],
             updatemenus=[

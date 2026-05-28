@@ -342,13 +342,6 @@ def test_scatter_beta_return_height_is_700(bundle: DataBundle) -> None:
     assert fig.layout.height == 700
 
 
-def test_scatter_legend_is_horizontal_below_plot(bundle: DataBundle) -> None:
-    fig = scatter_vol_return(bundle)
-    legend = fig.layout.legend
-    assert legend.orientation == "h"
-    assert legend.y is not None and legend.y < 0
-
-
 def test_scatter_dropdown_is_positioned_clear_of_legend(bundle: DataBundle) -> None:
     """Dropdown anchored at x=1.12 so it does not overlap markers or legend."""
     fig = scatter_vol_return(bundle)
@@ -458,3 +451,22 @@ def test_scatter_segment_ranges_differ_with_varied_data() -> None:
     em_eq_width = em_eq_x[1] - em_eq_x[0]
     # EM_Eq (vol 0.20, 0.23) is a tighter band than Full (0.05..0.40).
     assert em_eq_width < full_width
+
+
+def test_scatter_legend_is_top_left_overlay(bundle: DataBundle) -> None:
+    fig = scatter_vol_return(bundle)
+    legend = fig.layout.legend
+    assert legend.orientation == "v"
+    assert legend.y == 0.98
+    assert legend.x == 0.02
+    assert legend.bgcolor is not None and "rgba" in legend.bgcolor
+
+
+def test_scatter_slider_y_is_minus_0_18(bundle: DataBundle) -> None:
+    fig = scatter_vol_return(bundle)
+    assert fig.layout.sliders[0].y == -0.18
+
+
+def test_scatter_bottom_margin_is_140(bundle: DataBundle) -> None:
+    fig = scatter_vol_return(bundle)
+    assert fig.layout.margin.b == 140
