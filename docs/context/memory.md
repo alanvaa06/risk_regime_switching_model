@@ -14,3 +14,4 @@
 - decision: scatter dropdown exposes 7 segments (Full + 6 sub-segments); _TRACES_PER_SEGMENT=8 (markers + fit + ci_upper + ci_lower per DM and EM).
 - decision: viz v3 — seg_beta/seg_tercile carry full history (no reindex to scatter window); beta_timeseries x-axis = seg_beta.index; scatters keep 252d slider.
 - decision: viz v3 — scatter axis ranges are per-segment (computed via _segment_axis_range); segment dropdown atomically updates visibility + xaxis.range + yaxis.range + title.
+- constraint: NEVER name Alan's employer / corporate affiliation anywhere (code, docs, commits, README). RoRo is Alan's own personal work; author credit is exactly "Alan Vazquez, CFA" and nothing more.
