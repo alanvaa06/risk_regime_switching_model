@@ -7,7 +7,12 @@ import plotly.graph_objects as go
 import pytest
 
 from roro.report.bundle import DataBundle
-from roro.report.figures import _TRACES_PER_SEGMENT, SCATTER_SEGMENTS, scatter_vol_return
+from roro.report.figures import (
+    _TRACES_PER_SEGMENT,
+    SCATTER_SEGMENTS,
+    scatter_beta_return,
+    scatter_vol_return,
+)
 from roro.report.load import load_bundle
 
 
@@ -83,3 +88,18 @@ def test_scatter_vol_return_initial_visibility_is_full_only(bundle: DataBundle) 
             assert trace.visible is None or trace.visible is True
         else:
             assert trace.visible is False
+
+
+def test_scatter_beta_return_returns_figure(bundle: DataBundle) -> None:
+    fig = scatter_beta_return(bundle)
+    assert isinstance(fig, go.Figure)
+
+
+def test_scatter_beta_return_x_title_mentions_beta(bundle: DataBundle) -> None:
+    fig = scatter_beta_return(bundle)
+    assert "β" in fig.layout.xaxis.title.text or "beta" in fig.layout.xaxis.title.text.lower()
+
+
+def test_scatter_beta_return_title_prefix(bundle: DataBundle) -> None:
+    fig = scatter_beta_return(bundle)
+    assert fig.layout.title.text.startswith("Beta vs Return")

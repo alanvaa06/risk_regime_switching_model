@@ -257,3 +257,15 @@ def scatter_vol_return(bundle: DataBundle) -> go.Figure:
         y_title="3M total log return",
         title_prefix="Risk vs Return",
     )
+
+
+def scatter_beta_return(bundle: DataBundle) -> go.Figure:
+    """Beta-return scatter: x = β vs cap-wtd global, y = 3M log return."""
+    return _build_scatter(
+        bundle,
+        x_panel=bundle.beta_vs_global,
+        y_panel=bundle.ret_3m,
+        x_title="β vs cap-weighted global",
+        y_title="3M total log return",
+        title_prefix="Beta vs Return",
+    )
