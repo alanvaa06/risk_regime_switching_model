@@ -139,9 +139,8 @@ def load_bundle(
     seg_beta = _pivot_segment(beta_series, value_col="beta", scheme_filter="cap_wtd")
     seg_tercile = _pivot_segment(regimes, value_col="tercile")
 
-    # Align segment frames to `dates`
-    seg_beta = seg_beta.reindex(dates)
-    seg_tercile = seg_tercile.reindex(dates)
+    # seg_beta / seg_tercile carry their full history from the run-dir CSVs.
+    # Scatters use the 252d `dates`; the beta time-series uses seg_beta.index.
 
     return DataBundle(
         run_date=pd.Timestamp(str(snapshot["run_date"])),

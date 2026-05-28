@@ -47,3 +47,16 @@ def test_load_bundle_missing_beta_series_csv(minimal_run_dir: Path, tiny_xlsx: P
 
     with pytest.raises(ReportInputError, match="beta_series.csv"):
         load_bundle(minimal_run_dir, tiny_xlsx, window=21)
+
+
+def test_load_bundle_seg_beta_carries_full_history(
+    minimal_run_dir: Path, tiny_xlsx: Path
+) -> None:
+    """seg_beta / seg_tercile must span the full run-dir CSV history, not the 252d window."""
+    bundle = load_bundle(minimal_run_dir, tiny_xlsx, window=21)
+    # The conftest fixture writes beta_series.csv over 2020-01-02..2024-12-31 (~1300 bdays),
+    # while the per-series window is 21 days. Full history must exceed the scatter window.
+    assert len(bundle.seg_beta.index) > len(bundle.dates)
+    assert len(bundle.seg_tercile.index) > len(bundle.dates)
+    assert bundle.seg_beta["global"].notna().any()
+    assert bundle.seg_tercile["global"].notna().any()

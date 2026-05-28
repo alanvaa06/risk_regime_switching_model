@@ -377,3 +377,11 @@ def test_beta_timeseries_dropdown_at_x_1_12(bundle: DataBundle) -> None:
 def test_beta_timeseries_template_is_simple_white(bundle: DataBundle) -> None:
     fig = beta_timeseries(bundle)
     assert fig.layout.template is not None
+
+
+def test_beta_timeseries_x_axis_uses_full_seg_beta_index(bundle: DataBundle) -> None:
+    """β time-series x-axis spans full seg_beta history, not the 252d scatter window."""
+    fig = beta_timeseries(bundle)
+    line = fig.data[0]
+    assert len(line.x) == len(bundle.seg_beta.index)
+    assert len(line.x) > len(bundle.dates)

@@ -478,8 +478,9 @@ def beta_timeseries(bundle: DataBundle) -> go.Figure:
         default_segment = available[0]
 
     # Initial trace + shapes
+    ts_index = bundle.seg_beta.index
     initial_line = go.Scatter(
-        x=bundle.dates,
+        x=ts_index,
         y=bundle.seg_beta[default_segment].to_numpy(dtype=float),
         mode="lines",
         line={"color": "#222", "width": 2},
@@ -512,6 +513,7 @@ def beta_timeseries(bundle: DataBundle) -> go.Figure:
     buttons = []
     for seg in available:
         y = bundle.seg_beta[seg].to_numpy(dtype=float)
+        x_ts = bundle.seg_beta.index
         shapes: list[dict[str, object]] = []
         if seg in bundle.seg_tercile.columns:
             for start, end, label in _regime_runs(bundle.seg_tercile[seg]):
@@ -537,7 +539,7 @@ def beta_timeseries(bundle: DataBundle) -> go.Figure:
                 "method": "update",
                 "label": seg,
                 "args": [
-                    {"y": [y], "name": [seg]},
+                    {"x": [x_ts], "y": [y], "name": [seg]},
                     {
                         "title": f"Segment β with regime bands — {seg}",
                         "shapes": shapes,
