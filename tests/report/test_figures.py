@@ -138,3 +138,21 @@ def test_beta_timeseries_has_shading_shapes(bundle: DataBundle) -> None:
 def test_beta_timeseries_y_axis_label(bundle: DataBundle) -> None:
     fig = beta_timeseries(bundle)
     assert "β" in fig.layout.yaxis.title.text or "beta" in fig.layout.yaxis.title.text.lower()
+
+
+def test_scatter_em_color_is_green(bundle: DataBundle) -> None:
+    """EM marker traces must use #2ca02c (green) per v2 spec."""
+    from roro.report.figures import COLOR_EM  # noqa: PLC0415
+    assert COLOR_EM == "#2ca02c"
+
+
+def test_scatter_em_marker_trace_uses_green(bundle: DataBundle) -> None:
+    """At least one EM markers trace in the initial Full segment must render in green."""
+    fig = scatter_vol_return(bundle)
+    em_marker_traces = [
+        t for t in fig.data
+        if getattr(t, "name", None) == "Full:EM"
+    ]
+    assert em_marker_traces, "expected at least one trace named 'Full:EM'"
+    for t in em_marker_traces:
+        assert t.marker.color == "#2ca02c"

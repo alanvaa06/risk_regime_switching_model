@@ -16,7 +16,7 @@ SCATTER_SEGMENTS: tuple[SegmentFilter, ...] = (
 )
 
 COLOR_DM: str = "#1f77b4"
-COLOR_EM: str = "#ff7f0e"
+COLOR_EM: str = "#2ca02c"
 
 _MIN_OBS_FOR_OLS: int = 2
 _TRACES_PER_SEGMENT: int = 4  # DM markers + DM fit + EM markers + EM fit
