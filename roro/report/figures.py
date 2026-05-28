@@ -550,21 +550,34 @@ def beta_timeseries(bundle: DataBundle) -> go.Figure:
         data=[initial_line],
         layout=go.Layout(
             title=f"Segment β with regime bands — {default_segment}",
-            xaxis={"title": "Date"},
-            yaxis={"title": "Cap-weighted β"},
+            height=700,
+            template="simple_white",
+            font={"family": "system-ui, -apple-system, sans-serif", "size": 13},
+            margin={"l": 60, "r": 200, "t": 60, "b": 120},
+            xaxis={
+                "title": "Date",
+                "showgrid": True,
+                "gridcolor": "#e6e6e6",
+                "zeroline": False,
+            },
+            yaxis={
+                "title": "Cap-weighted β",
+                "showgrid": True,
+                "gridcolor": "#e6e6e6",
+                "zeroline": False,
+            },
             shapes=initial_shapes,
             updatemenus=[
                 {
                     "type": "dropdown",
                     "showactive": True,
                     "buttons": buttons,
-                    "x": 1.02,
+                    "x": 1.12,
                     "y": 1.0,
                     "xanchor": "left",
                     "yanchor": "top",
                 }
             ],
-            template="plotly_white",
         ),
     )
     return fig

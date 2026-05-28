@@ -71,3 +71,12 @@ def test_assemble_requires_exactly_three_figures() -> None:
             run_date=pd.Timestamp("2024-03-29"),
             methodology_version="1.0.0",
         )
+
+
+def test_assemble_container_max_width_is_1280() -> None:
+    out = assemble(
+        [_dummy_fig(), _dummy_fig(), _dummy_fig()],
+        run_date=pd.Timestamp("2024-03-29"),
+        methodology_version="1.0.0",
+    )
+    assert "max-width: 1280px" in out

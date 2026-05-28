@@ -361,3 +361,19 @@ def test_scatter_template_is_simple_white(bundle: DataBundle) -> None:
     # Plotly resolves the template into a Template object; existence is enough proof
     # that a template was wired (precise name check would require deep template lookup).
     assert fig.layout.template is not None
+
+
+def test_beta_timeseries_height_is_700(bundle: DataBundle) -> None:
+    fig = beta_timeseries(bundle)
+    assert fig.layout.height == 700
+
+
+def test_beta_timeseries_dropdown_at_x_1_12(bundle: DataBundle) -> None:
+    fig = beta_timeseries(bundle)
+    menus = list(fig.layout.updatemenus)
+    assert menus[0].x == 1.12
+
+
+def test_beta_timeseries_template_is_simple_white(bundle: DataBundle) -> None:
+    fig = beta_timeseries(bundle)
+    assert fig.layout.template is not None

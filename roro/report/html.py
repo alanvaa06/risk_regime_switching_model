@@ -20,7 +20,7 @@ body {
   background: #fafafa;
   color: #222;
 }
-.container { max-width: 1200px; margin: 0 auto; padding: 24px; }
+.container { max-width: 1280px; margin: 0 auto; padding: 24px; }
 header { border-bottom: 1px solid #ddd; margin-bottom: 24px; padding-bottom: 12px; }
 header h1 { margin: 0 0 4px; font-size: 24px; }
 header .meta { color: #666; font-size: 13px; }
