@@ -12,3 +12,5 @@
 - decision: per-series β vs cap-wtd global proxy lives in viz layer (roro/report/beta_vs_global.py), not engine.
 - decision: viz v2 uses scipy.stats.linregress for OLS+stderr; CI ribbon = upper trace (no fill) + lower trace (fill=tonexty) per color group.
 - decision: scatter dropdown exposes 7 segments (Full + 6 sub-segments); _TRACES_PER_SEGMENT=8 (markers + fit + ci_upper + ci_lower per DM and EM).
+- decision: viz v3 — seg_beta/seg_tercile carry full history (no reindex to scatter window); beta_timeseries x-axis = seg_beta.index; scatters keep 252d slider.
+- decision: viz v3 — scatter axis ranges are per-segment (computed via _segment_axis_range); segment dropdown atomically updates visibility + xaxis.range + yaxis.range + title.
