@@ -3,12 +3,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import plotly.graph_objects as go
 import pytest
 
 from roro.report.bundle import DataBundle
 from roro.report.figures import (
     BETA_TS_SEGMENTS,
+    _ci_band_traces,
+    _ols_with_ci,
     beta_timeseries,
     scatter_beta_return,
     scatter_vol_return,
@@ -156,3 +159,88 @@ def test_scatter_em_marker_trace_uses_green(bundle: DataBundle) -> None:
     assert em_marker_traces, "expected at least one trace named 'Full:EM'"
     for t in em_marker_traces:
         assert t.marker.color == "#2ca02c"
+
+
+def test_ols_with_ci_returns_none_for_two_points() -> None:
+    """N < 3 must return None because stderr requires >= 3 obs."""
+    x = np.array([1.0, 2.0])
+    y = np.array([1.0, 2.0])
+    assert _ols_with_ci(x, y) is None
+
+
+def test_ols_with_ci_returns_none_for_zero_variance_x() -> None:
+    """Identical x values yield rank-deficient fit; must return None."""
+    x = np.array([3.0, 3.0, 3.0, 3.0])
+    y = np.array([1.0, 2.0, 3.0, 4.0])
+    assert _ols_with_ci(x, y) is None
+
+
+def test_ols_with_ci_returns_none_for_all_nan() -> None:
+    x = np.array([np.nan, np.nan, np.nan])
+    y = np.array([np.nan, np.nan, np.nan])
+    assert _ols_with_ci(x, y) is None
+
+
+def test_ols_with_ci_matches_scipy_linregress() -> None:
+    """Happy path: returned values agree with scipy.stats.linregress."""
+    from scipy.stats import linregress  # noqa: PLC0415
+    rng = np.random.default_rng(42)
+    x = rng.normal(size=50)
+    y = 2.0 * x + 0.5 + rng.normal(scale=0.1, size=50)
+    out = _ols_with_ci(x, y)
+    assert out is not None
+    slope, intercept, se_slope, se_intercept = out
+    expected = linregress(x, y)
+    assert np.isclose(slope, expected.slope, atol=1e-9)
+    assert np.isclose(intercept, expected.intercept, atol=1e-9)
+    assert np.isclose(se_slope, expected.stderr, atol=1e-9)
+    assert np.isclose(se_intercept, expected.intercept_stderr, atol=1e-9)
+
+
+def test_ci_band_traces_returns_two_scatters() -> None:
+    upper, lower = _ci_band_traces(
+        slope=1.0,
+        intercept=0.0,
+        se_slope=0.1,
+        se_intercept=0.2,
+        mean_x=0.0,
+        x_range=(-1.0, 1.0),
+        color="#1f77b4",
+    )
+    assert isinstance(upper, go.Scatter)
+    assert isinstance(lower, go.Scatter)
+
+
+def test_ci_band_traces_upper_has_no_fill_lower_uses_tonexty() -> None:
+    upper, lower = _ci_band_traces(
+        slope=1.0, intercept=0.0,
+        se_slope=0.1, se_intercept=0.2,
+        mean_x=0.0, x_range=(-1.0, 1.0),
+        color="#1f77b4",
+    )
+    # Plotly stores unset fill as None or "none"
+    assert upper.fill in (None, "none")
+    assert lower.fill == "tonexty"
+
+
+def test_ci_band_traces_default_50_points() -> None:
+    upper, lower = _ci_band_traces(
+        slope=1.0, intercept=0.0,
+        se_slope=0.1, se_intercept=0.2,
+        mean_x=0.0, x_range=(-1.0, 1.0),
+        color="#1f77b4",
+    )
+    assert len(upper.x) == 50
+    assert len(lower.x) == 50
+
+
+def test_ci_band_traces_upper_above_lower_at_every_point() -> None:
+    upper, lower = _ci_band_traces(
+        slope=1.0, intercept=0.0,
+        se_slope=0.1, se_intercept=0.2,
+        mean_x=0.0, x_range=(-1.0, 1.0),
+        color="#1f77b4",
+    )
+    u = np.asarray(upper.y, dtype=float)
+    lo = np.asarray(lower.y, dtype=float)
+    assert (u >= lo).all()

@@ -6,6 +6,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+from scipy.stats import linregress
 
 from roro.report.bundle import DataBundle
 
@@ -20,6 +21,9 @@ COLOR_EM: str = "#2ca02c"
 
 _MIN_OBS_FOR_OLS: int = 2
 _TRACES_PER_SEGMENT: int = 4  # DM markers + DM fit + EM markers + EM fit
+_CI_Z: float = 1.96
+_MIN_OBS_FOR_CI: int = 3
+_CI_BAND_POINTS: int = 50
 
 
 def _series_for_segment(meta: pd.DataFrame, segment: SegmentFilter) -> list[str]:  # noqa: PLR0911
@@ -55,6 +59,93 @@ def _ols_slope_intercept(
         return float("nan"), float("nan")
     slope, intercept = np.polyfit(xv, yv, 1)
     return float(slope), float(intercept)
+
+
+def _ols_with_ci(
+    x: np.ndarray[tuple[int, ...], np.dtype[np.float64]],
+    y: np.ndarray[tuple[int, ...], np.dtype[np.float64]],
+) -> tuple[float, float, float, float] | None:
+    """Return (slope, intercept, se_slope, se_intercept) or None.
+
+    None signals that a CI ribbon cannot be computed for this partition:
+    - fewer than _MIN_OBS_FOR_CI finite (x, y) pairs, or
+    - x has zero variance after masking.
+
+    Wraps scipy.stats.linregress.
+    """
+    mask = np.isfinite(x) & np.isfinite(y)
+    if int(mask.sum()) < _MIN_OBS_FOR_CI:
+        return None
+    xv = x[mask]
+    yv = y[mask]
+    if np.ptp(xv) == 0.0:
+        return None
+    result = linregress(xv, yv)
+    return (
+        float(result.slope),
+        float(result.intercept),
+        float(result.stderr),
+        float(result.intercept_stderr),
+    )
+
+
+def _ci_band_traces(
+    slope: float,
+    intercept: float,
+    se_slope: float,
+    se_intercept: float,
+    mean_x: float,
+    x_range: tuple[float, float],
+    color: str,
+    *,
+    z: float = _CI_Z,
+    n_points: int = _CI_BAND_POINTS,
+) -> tuple[go.Scatter, go.Scatter]:
+    """Return (upper, lower) Scatter traces that form a filled CI ribbon.
+
+    Upper trace: line only, no fill.
+    Lower trace: line with fill='tonexty' that fills the area between it and
+    the previous trace (the upper bound) using a translucent version of `color`.
+    """
+    x = np.linspace(x_range[0], x_range[1], n_points)
+    y_fit = slope * x + intercept
+    se_y = np.sqrt(se_intercept**2 + (x - mean_x) ** 2 * se_slope**2)
+    delta = z * se_y
+    y_hi = y_fit + delta
+    y_lo = y_fit - delta
+
+    fill_color = _hex_to_rgba(color, alpha=0.18)
+
+    upper = go.Scatter(
+        x=x,
+        y=y_hi,
+        mode="lines",
+        line={"color": color, "width": 0},
+        name="ci_upper",
+        showlegend=False,
+        hoverinfo="skip",
+    )
+    lower = go.Scatter(
+        x=x,
+        y=y_lo,
+        mode="lines",
+        line={"color": color, "width": 0},
+        fill="tonexty",
+        fillcolor=fill_color,
+        name="ci_lower",
+        showlegend=False,
+        hoverinfo="skip",
+    )
+    return upper, lower
+
+
+def _hex_to_rgba(hex_color: str, *, alpha: float) -> str:
+    """Convert '#rrggbb' to 'rgba(r, g, b, alpha)'."""
+    h = hex_color.lstrip("#")
+    r = int(h[0:2], 16)
+    g = int(h[2:4], 16)
+    b = int(h[4:6], 16)
+    return f"rgba({r}, {g}, {b}, {alpha})"
 
 
 def _scatter_traces_for_date(
