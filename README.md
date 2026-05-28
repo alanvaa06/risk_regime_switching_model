@@ -6,6 +6,10 @@
 **Status:** v1.0 — *diagnostic only* (no predictive layer)
 **License of data:** proprietary (`data.xlsx` is git-ignored); external proxies are free (FRED).
 
+![Segment β with regime bands](docs/assets/report_beta_timeseries.png)
+
+*Cap-weighted cross-sectional price-of-risk (the realized SML slope) for the global universe over ~6 years, shaded by tercile regime band (risk-off red / transitional grey / risk-on green).*
+
 ---
 
 ## Table of Contents
@@ -227,6 +231,20 @@ This is distinct from the segment-level cross-sectional slope of §5.2 — it is
 1. **Risk-return scatter** — x = EWMA annualized volatility, y = 3-month total log return. One marker per country-asset, colored **blue (DM) / green (EM)**, with a **dashed OLS trend line and a 95% confidence ribbon per group**. A **date slider** (trailing 252 business days) animates the snapshot through time; a **segment dropdown** (Full / DM / EM / DM_Eq / EM_Eq / DM_FI / EM_FI) filters the points and **retightens both axes to the selected cluster**.
 2. **Beta-return scatter** — identical, with x = per-series 63-day beta vs the cap-weighted global proxy (§5.7).
 3. **Segment β time-series** — the cap-weighted slope for a selected segment over the **full available history**, with the background shaded by tercile regime band (Risk-off red / Transitional grey / Risk-on green). A segment dropdown switches the line and its shading.
+
+### Sample output
+
+**Risk vs Return** — cross-section on the run date, x = EWMA annualized volatility, y = 3-month log return. The upward-sloping fit is the risk-on signature (high-vol assets out-earning low-vol assets); EM (green) carries a steeper slope and wider confidence band than DM (blue).
+
+![Risk vs Return scatter](docs/assets/report_risk_return.png)
+
+**Beta vs Return** — same cross-section, x = per-series 63-day beta vs the cap-weighted global proxy.
+
+![Beta vs Return scatter](docs/assets/report_beta_return.png)
+
+**Segment β with regime bands** — the cap-weighted slope over full history with tercile regime shading and a segment selector.
+
+![Segment beta time-series with regime bands](docs/assets/report_beta_timeseries.png)
 
 **Confidence ribbon math.** For an OLS fit `ŷ = a + b·x`, the 95% band uses the standard-error-of-fit
 ```
