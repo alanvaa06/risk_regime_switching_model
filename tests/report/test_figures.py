@@ -485,3 +485,52 @@ def test_scatter_marker_hover_template_includes_country_asset(bundle: DataBundle
     assert "%{text}" in target.hovertemplate
     pattern = re.compile(r"^[A-Za-z .]+_(Eq|FI)$")
     assert pattern.match(target.text[0]), f"unexpected hover label: {target.text[0]!r}"
+
+
+def test_smooth_regime_hysteresis_absorbs_short_blip() -> None:
+    """A blip shorter than n is absorbed into the prevailing regime."""
+    import pandas as pd  # noqa: PLC0415
+
+    from roro.report.figures import _smooth_regime_hysteresis  # noqa: PLC0415
+
+    idx = pd.date_range("2024-01-01", periods=65, freq="B")
+    labels = pd.Series(
+        ["Risk-off"] * 30 + ["Risk-on"] * 5 + ["Risk-off"] * 30, index=idx
+    )
+    out = _smooth_regime_hysteresis(labels, 21)
+    assert (out == "Risk-off").all()
+
+
+def test_smooth_regime_hysteresis_commits_sustained_switch() -> None:
+    """A switch commits on the 21st consecutive confirming day."""
+    import pandas as pd  # noqa: PLC0415
+
+    from roro.report.figures import _smooth_regime_hysteresis  # noqa: PLC0415
+
+    idx = pd.date_range("2024-01-01", periods=55, freq="B")
+    labels = pd.Series(["Risk-off"] * 30 + ["Risk-on"] * 25, index=idx)
+    out = _smooth_regime_hysteresis(labels, 21)
+    # 25 Risk-on inputs; first 20 stay shaded Risk-off (unconfirmed),
+    # band flips on the 21st -> exactly 5 trailing Risk-on entries.
+    assert out.iloc[-1] == "Risk-on"
+    assert int((out == "Risk-on").sum()) == 5
+    assert out.iloc[-6] == "Risk-off"
+
+
+def test_smooth_regime_hysteresis_empty_returns_empty() -> None:
+    import pandas as pd  # noqa: PLC0415
+
+    from roro.report.figures import _smooth_regime_hysteresis  # noqa: PLC0415
+
+    out = _smooth_regime_hysteresis(pd.Series([], dtype=object), 21)
+    assert out.empty
+
+
+def test_smooth_regime_hysteresis_all_nan_returns_empty() -> None:
+    import pandas as pd  # noqa: PLC0415
+
+    from roro.report.figures import _smooth_regime_hysteresis  # noqa: PLC0415
+
+    idx = pd.date_range("2024-01-01", periods=3, freq="B")
+    out = _smooth_regime_hysteresis(pd.Series([np.nan, np.nan, np.nan], index=idx), 21)
+    assert out.empty

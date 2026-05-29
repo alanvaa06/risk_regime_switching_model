@@ -478,6 +478,40 @@ REGIME_COLORS: dict[str, str] = {
 }
 
 
+_REGIME_CONFIRM_DAYS: int = 21
+
+
+def _smooth_regime_hysteresis(labels: pd.Series, n: int) -> pd.Series:
+    """Debounce a daily regime-label series for background shading.
+
+    The "confirmed" band label switches to a new value only after that value
+    has persisted for `n` consecutive observations. Flicker shorter than `n`
+    is absorbed into the prevailing regime. NaN values are dropped first; an
+    empty or all-NaN input returns an empty Series.
+
+    This affects ONLY the chart's background bands — it does not alter the
+    engine's regime labels.
+    """
+    s = labels.dropna()
+    if s.empty:
+        return s
+    confirmed = s.iloc[0]
+    candidate = confirmed
+    streak = 0
+    out: list[str] = []
+    for label in s:
+        if label == confirmed:
+            candidate, streak = confirmed, 0
+        elif label == candidate:
+            streak += 1
+            if streak >= n:
+                confirmed, streak = candidate, 0
+        else:
+            candidate, streak = label, 1
+        out.append(str(confirmed))
+    return pd.Series(out, index=s.index)
+
+
 def _regime_runs(labels: pd.Series) -> list[tuple[pd.Timestamp, pd.Timestamp, str]]:
     """Compress a date-indexed label series into consecutive runs of identical labels."""
     s = labels.dropna()
