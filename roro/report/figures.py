@@ -472,9 +472,9 @@ BETA_TS_SEGMENTS: tuple[str, ...] = (
 )
 
 REGIME_COLORS: dict[str, str] = {
-    "Risk-off": "rgba(220, 50, 47, 0.28)",
-    "Transitional": "rgba(128, 128, 128, 0.15)",
-    "Risk-on": "rgba(46, 160, 67, 0.28)",
+    "Risk-off": "rgba(220, 50, 47, 0.40)",
+    "Transitional": "rgba(128, 128, 128, 0.22)",
+    "Risk-on": "rgba(46, 160, 67, 0.40)",
 }
 
 
