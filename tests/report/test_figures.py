@@ -539,9 +539,9 @@ def test_smooth_regime_hysteresis_all_nan_returns_empty() -> None:
 def test_regime_colors_opacity_raised() -> None:
     from roro.report.figures import REGIME_COLORS  # noqa: PLC0415
 
-    assert "0.40" in REGIME_COLORS["Risk-off"]
-    assert "0.40" in REGIME_COLORS["Risk-on"]
-    assert "0.22" in REGIME_COLORS["Transitional"]
+    assert "0.55" in REGIME_COLORS["Risk-off"]
+    assert "0.55" in REGIME_COLORS["Risk-on"]
+    assert "0.32" in REGIME_COLORS["Transitional"]
 
 
 def test_beta_timeseries_smoothing_reduces_rect_count() -> None:
