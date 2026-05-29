@@ -472,9 +472,9 @@ BETA_TS_SEGMENTS: tuple[str, ...] = (
 )
 
 REGIME_COLORS: dict[str, str] = {
-    "Risk-off": "rgba(220, 50, 47, 0.12)",
-    "Transitional": "rgba(128, 128, 128, 0.06)",
-    "Risk-on": "rgba(46, 160, 67, 0.12)",
+    "Risk-off": "rgba(220, 50, 47, 0.28)",
+    "Transitional": "rgba(128, 128, 128, 0.15)",
+    "Risk-on": "rgba(46, 160, 67, 0.28)",
 }
 
 
@@ -554,7 +554,11 @@ def beta_timeseries(bundle: DataBundle) -> go.Figure:
 
     initial_shapes = []
     if default_segment in bundle.seg_tercile.columns:
-        for start, end, label in _regime_runs(bundle.seg_tercile[default_segment]):
+        for start, end, label in _regime_runs(
+            _smooth_regime_hysteresis(
+                bundle.seg_tercile[default_segment], _REGIME_CONFIRM_DAYS
+            )
+        ):
             color = REGIME_COLORS.get(label)
             if color is None:
                 continue
@@ -580,7 +584,9 @@ def beta_timeseries(bundle: DataBundle) -> go.Figure:
         x_ts = bundle.seg_beta.index
         shapes: list[dict[str, object]] = []
         if seg in bundle.seg_tercile.columns:
-            for start, end, label in _regime_runs(bundle.seg_tercile[seg]):
+            for start, end, label in _regime_runs(
+                _smooth_regime_hysteresis(bundle.seg_tercile[seg], _REGIME_CONFIRM_DAYS)
+            ):
                 color = REGIME_COLORS.get(label)
                 if color is None:
                     continue

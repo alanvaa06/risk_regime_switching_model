@@ -534,3 +534,54 @@ def test_smooth_regime_hysteresis_all_nan_returns_empty() -> None:
     idx = pd.date_range("2024-01-01", periods=3, freq="B")
     out = _smooth_regime_hysteresis(pd.Series([np.nan, np.nan, np.nan], index=idx), 21)
     assert out.empty
+
+
+def test_regime_colors_opacity_raised() -> None:
+    from roro.report.figures import REGIME_COLORS  # noqa: PLC0415
+
+    assert "0.28" in REGIME_COLORS["Risk-off"]
+    assert "0.28" in REGIME_COLORS["Risk-on"]
+    assert "0.15" in REGIME_COLORS["Transitional"]
+
+
+def test_beta_timeseries_smoothing_reduces_rect_count() -> None:
+    """Hysteresis smoothing collapses sliver runs into broad blocks.
+
+    A heavily-flickering tercile series produces many raw runs; after smoothing
+    the chart should render strictly fewer rect shapes.
+    """
+    import pandas as pd  # noqa: PLC0415
+
+    from roro.report.bundle import DataBundle  # noqa: PLC0415
+    from roro.report.figures import _regime_runs, beta_timeseries  # noqa: PLC0415
+
+    n = 120
+    idx = pd.date_range("2024-01-01", periods=n, freq="B")
+    # Alternate every 3 days -> ~40 raw runs.
+    pattern: list[str] = []
+    labels_cycle = ["Risk-off", "Risk-on"]
+    for i in range(n):
+        pattern.append(labels_cycle[(i // 3) % 2])
+    tercile = pd.Series(pattern, index=idx)
+
+    beta = pd.DataFrame({"global": [0.1] * n}, index=idx)
+    seg_tercile = pd.DataFrame({"global": pattern}, index=idx)
+    empty_meta = pd.DataFrame(
+        {"country": [], "asset": [], "segment": [], "weight": []}
+    )
+    bundle = DataBundle(
+        run_date=pd.Timestamp("2024-06-01"),
+        methodology_version="1.0.0",
+        dates=pd.DatetimeIndex(idx),
+        vol=pd.DataFrame(index=idx),
+        ret_3m=pd.DataFrame(index=idx),
+        beta_vs_global=pd.DataFrame(index=idx),
+        meta=empty_meta,
+        seg_beta=beta,
+        seg_tercile=seg_tercile,
+    )
+
+    fig = beta_timeseries(bundle)
+    rect_count = len([s for s in (fig.layout.shapes or []) if s.type == "rect"])
+    raw_run_count = len(_regime_runs(tercile))
+    assert rect_count < raw_run_count
