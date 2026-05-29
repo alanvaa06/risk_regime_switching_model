@@ -22,7 +22,7 @@ COLOR_EM: str = "#2ca02c"
 COLOR_DM_FI: str = "#ff7f0e"  # orange — distinguishes DM fixed income from DM equity
 COLOR_EM_FI: str = "#d62728"  # red — distinguishes EM fixed income from EM equity
 
-_TRACES_PER_SEGMENT: int = 8  # per color group: markers + fit + ci_upper + ci_lower; 2 groups
+_TRACES_PER_SEGMENT: int = 8  # per sub-group: markers + fit + ci_upper + ci_lower; 2 sub-groups
 _CI_Z: float = 1.96
 _MIN_OBS_FOR_CI: int = 3
 _CI_BAND_POINTS: int = 50
