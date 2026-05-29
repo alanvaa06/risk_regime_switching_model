@@ -1,7 +1,6 @@
 """Pure figure builders: scatter pair + segment β time-series."""
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
@@ -19,10 +18,8 @@ SCATTER_SEGMENTS: tuple[SegmentFilter, ...] = (
 
 COLOR_DM: str = "#1f77b4"
 COLOR_EM: str = "#2ca02c"
-COLOR_DM_FI: str = "#ff7f0e"  # orange — distinguishes DM fixed income from DM equity
-COLOR_EM_FI: str = "#d62728"  # red — distinguishes EM fixed income from EM equity
 
-_TRACES_PER_SEGMENT: int = 8  # per sub-group: markers + fit + ci_upper + ci_lower; 2 sub-groups
+_TRACES_PER_SEGMENT: int = 8  # per color group: markers + fit + ci_upper + ci_lower; 2 groups
 _CI_Z: float = 1.96
 _MIN_OBS_FOR_CI: int = 3
 _CI_BAND_POINTS: int = 50
@@ -134,38 +131,6 @@ def _hex_to_rgba(hex_color: str, *, alpha: float) -> str:
     return f"rgba({r}, {g}, {b}, {alpha})"
 
 
-@dataclass(frozen=True)
-class _SubGroup:
-    """One colored/shaped point set within a scatter segment view."""
-
-    label: str  # legend text, e.g. "DM Eq"
-    series_key: SegmentFilter  # key into _series_for_segment
-    color: str
-    symbol: str  # plotly marker symbol, e.g. "circle" | "diamond"
-
-
-_SEGMENT_SUBGROUPS: dict[SegmentFilter, tuple[_SubGroup, ...]] = {
-    "Full": (
-        _SubGroup("DM", "DM", COLOR_DM, "circle"),
-        _SubGroup("EM", "EM", COLOR_EM, "circle"),
-    ),
-    "DM": (
-        _SubGroup("DM Eq", "DM_Eq", COLOR_DM, "circle"),
-        _SubGroup("DM FI", "DM_FI", COLOR_DM_FI, "diamond"),
-    ),
-    "EM": (
-        _SubGroup("EM Eq", "EM_Eq", COLOR_EM, "circle"),
-        _SubGroup("EM FI", "EM_FI", COLOR_EM_FI, "diamond"),
-    ),
-    "DM_Eq": (_SubGroup("DM Eq", "DM_Eq", COLOR_DM, "circle"),),
-    "EM_Eq": (_SubGroup("EM Eq", "EM_Eq", COLOR_EM, "circle"),),
-    "DM_FI": (_SubGroup("DM FI", "DM_FI", COLOR_DM_FI, "diamond"),),
-    "EM_FI": (_SubGroup("EM FI", "EM_FI", COLOR_EM_FI, "diamond"),),
-}
-
-_SUBGROUPS_PER_SEGMENT: int = 2  # max sub-groups in any segment; shorter ones are padded
-
-
 def _scatter_traces_for_date(
     bundle: DataBundle,
     x_panel: pd.DataFrame,
@@ -175,48 +140,39 @@ def _scatter_traces_for_date(
 ) -> list[go.Scatter]:
     """Build exactly _TRACES_PER_SEGMENT (=8) traces for one (date, segment).
 
-    The segment's sub-groups (1 or 2) come from _SEGMENT_SUBGROUPS. For each of
-    _SUBGROUPS_PER_SEGMENT slots, emit [markers, fit, ci_upper, ci_lower]; slots
-    beyond the segment's sub-group count, and empty/degenerate partitions, emit
-    empty-array placeholders so the trace count is invariant across frames.
+    Output order: for each of (DM, EM) in order:
+      [markers, fit, ci_upper, ci_lower].
+    Empty partitions yield empty-array Scatter placeholders so the trace count
+    is invariant across frames.
     """
-    subgroups = _SEGMENT_SUBGROUPS[segment]
+    series_ids = _series_for_segment(bundle.meta, segment)
+    sub = bundle.meta.loc[series_ids]
     x_row = x_panel.loc[date]
     y_row = y_panel.loc[date]
     traces: list[go.Scatter] = []
-    for slot in range(_SUBGROUPS_PER_SEGMENT):
-        if slot >= len(subgroups):
-            # Pad an absent slot with placeholders styled like the first sub-group.
-            traces.extend(_empty_subgroup_traces(subgroups[0]))
-            continue
-        sg = subgroups[slot]
-        group_ids = [
-            c for c in _series_for_segment(bundle.meta, sg.series_key)
-            if c in x_panel.columns
-        ]
+    for color_label, color in (("DM", COLOR_DM), ("EM", COLOR_EM)):
+        group_ids = list(sub.index[sub["segment"] == color_label])
         if not group_ids:
-            traces.extend(_empty_subgroup_traces(sg))
+            traces.extend(_empty_color_group_traces(segment, color_label, color))
             continue
-        meta_sub = bundle.meta.loc[group_ids]
         x = x_row.reindex(group_ids).to_numpy(dtype=float)
         y = y_row.reindex(group_ids).to_numpy(dtype=float)
         valid = np.isfinite(x) & np.isfinite(y)
-        countries = meta_sub["country"].to_numpy()
-        assets = meta_sub["asset"].to_numpy()
-        # Marker trace (1 of 4 per sub-group)
+        countries = sub.loc[group_ids, "country"].to_numpy()
+        assets = sub.loc[group_ids, "asset"].to_numpy()
+        # Marker trace (1 of 4 per color group)
         traces.append(
             go.Scatter(
                 x=x[valid],
                 y=y[valid],
                 mode="markers",
                 marker={
-                    "color": sg.color,
-                    "symbol": sg.symbol,
+                    "color": color,
                     "size": 9,
                     "opacity": 0.85,
                     "line": {"color": "white", "width": 1},
                 },
-                name=sg.label,
+                name=f"{segment}:{color_label}",
                 text=[
                     f"{c}_{a}"
                     for c, a in zip(countries[valid], assets[valid], strict=True)
@@ -224,26 +180,28 @@ def _scatter_traces_for_date(
                 hovertemplate="%{text}<br>x=%{x:.4f}<br>y=%{y:.4f}<extra></extra>",
             )
         )
-        # Fit + CI traces (3 of 4 per sub-group)
+        # Fit + CI traces (3 of 4 per color group)
         fit_result = _ols_with_ci(x[valid], y[valid])
         if fit_result is None:
-            traces.extend(_empty_fit_and_ci_traces(sg))
+            traces.extend(_empty_fit_and_ci_traces(segment, color_label, color))
             continue
         slope, intercept, se_slope, se_intercept = fit_result
         xv = x[valid]
         x_lo, x_hi = float(np.nanmin(xv)), float(np.nanmax(xv))
+        # Fit line (2 of 4)
         x_line = np.array([x_lo, x_hi])
         traces.append(
             go.Scatter(
                 x=x_line,
                 y=slope * x_line + intercept,
                 mode="lines",
-                line={"color": sg.color, "dash": "dash"},
-                name=f"{sg.label} fit",
+                line={"color": color, "dash": "dash"},
+                name=f"{segment}:{color_label} fit",
                 showlegend=False,
                 hoverinfo="skip",
             )
         )
+        # CI upper + lower (3 + 4 of 4)
         upper, lower = _ci_band_traces(
             slope=slope,
             intercept=intercept,
@@ -251,48 +209,46 @@ def _scatter_traces_for_date(
             se_intercept=se_intercept,
             mean_x=float(np.mean(xv)),
             x_range=(x_lo, x_hi),
-            color=sg.color,
+            color=color,
         )
         traces.append(upper)
         traces.append(lower)
     return traces
 
 
-def _empty_subgroup_traces(sg: _SubGroup) -> list[go.Scatter]:
-    """Four empty-array placeholders for an absent or empty sub-group.
-
-    The markers placeholder sets showlegend=False so empty/padded sub-groups
-    never produce a phantom (or duplicate) legend entry.
-    """
+def _empty_color_group_traces(
+    segment: SegmentFilter, color_label: str, color: str
+) -> list[go.Scatter]:
+    """Four empty-array placeholders for an absent color group."""
     return [
         go.Scatter(
             x=[],
             y=[],
             mode="markers",
             marker={
-                "color": sg.color,
-                "symbol": sg.symbol,
+                "color": color,
                 "size": 9,
                 "opacity": 0.85,
                 "line": {"color": "white", "width": 1},
             },
-            name=sg.label,
-            showlegend=False,
+            name=f"{segment}:{color_label}",
             hoverinfo="skip",
         ),
-        *_empty_fit_and_ci_traces(sg),
+        *_empty_fit_and_ci_traces(segment, color_label, color),
     ]
 
 
-def _empty_fit_and_ci_traces(sg: _SubGroup) -> list[go.Scatter]:
+def _empty_fit_and_ci_traces(
+    segment: SegmentFilter, color_label: str, color: str
+) -> list[go.Scatter]:
     """Three empty-array placeholders: fit line, ci_upper, ci_lower."""
     return [
         go.Scatter(
             x=[],
             y=[],
             mode="lines",
-            line={"color": sg.color, "dash": "dash"},
-            name=f"{sg.label} fit",
+            line={"color": color, "dash": "dash"},
+            name=f"{segment}:{color_label} fit",
             showlegend=False,
             hoverinfo="skip",
         ),
@@ -300,7 +256,7 @@ def _empty_fit_and_ci_traces(sg: _SubGroup) -> list[go.Scatter]:
             x=[],
             y=[],
             mode="lines",
-            line={"color": sg.color, "width": 0},
+            line={"color": color, "width": 0},
             name="ci_upper",
             showlegend=False,
             hoverinfo="skip",
@@ -309,9 +265,9 @@ def _empty_fit_and_ci_traces(sg: _SubGroup) -> list[go.Scatter]:
             x=[],
             y=[],
             mode="lines",
-            line={"color": sg.color, "width": 0},
+            line={"color": color, "width": 0},
             fill="tonexty",
-            fillcolor=_hex_to_rgba(sg.color, alpha=0.18),
+            fillcolor=_hex_to_rgba(color, alpha=0.18),
             name="ci_lower",
             showlegend=False,
             hoverinfo="skip",

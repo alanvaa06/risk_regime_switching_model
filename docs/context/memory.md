@@ -16,4 +16,3 @@
 - decision: viz v3 — scatter axis ranges are per-segment (computed via _segment_axis_range); segment dropdown atomically updates visibility + xaxis.range + yaxis.range + title.
 - constraint: NEVER name Alan's employer / corporate affiliation anywhere (code, docs, commits, README). RoRo is Alan's own personal work; author credit is exactly "Alan Vazquez, CFA" and nothing more.
 - decision: viz v4 — beta_timeseries shades a HYSTERESIS-SMOOTHED tercile (_smooth_regime_hysteresis, _REGIME_CONFIRM_DAYS=21); raw daily tercile is too noisy to shade. Cosmetic only — engine regime output unchanged.
-- decision: viz v5 — scatter color-groups are per-segment SUB-GROUPS (_SEGMENT_SUBGROUPS), not fixed DM/EM; DM/EM views split Eq vs FI by color (DM_FI orange, EM_FI red) + marker shape (Eq circle, FI diamond). Full stays 2 region groups. _TRACES_PER_SEGMENT unchanged at 8.

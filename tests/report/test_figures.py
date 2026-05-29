@@ -150,11 +150,15 @@ def test_scatter_em_color_is_green(bundle: DataBundle) -> None:
 
 
 def test_scatter_em_marker_trace_uses_green(bundle: DataBundle) -> None:
-    """The Full-view EM marker trace renders green (#2ca02c)."""
+    """At least one EM markers trace in the initial Full segment must render in green."""
     fig = scatter_vol_return(bundle)
-    em = [t for t in fig.data[0:8] if getattr(t, "name", None) == "EM"]
-    assert em, "expected a Full-view trace named 'EM'"
-    assert em[0].marker.color == "#2ca02c"
+    em_marker_traces = [
+        t for t in fig.data
+        if getattr(t, "name", None) == "Full:EM"
+    ]
+    assert em_marker_traces, "expected at least one trace named 'Full:EM'"
+    for t in em_marker_traces:
+        assert t.marker.color == "#2ca02c"
 
 
 def test_ols_with_ci_returns_none_for_two_points() -> None:
@@ -581,54 +585,3 @@ def test_beta_timeseries_smoothing_reduces_rect_count() -> None:
     rect_count = len([s for s in (fig.layout.shapes or []) if s.type == "rect"])
     raw_run_count = len(_regime_runs(tercile))
     assert rect_count < raw_run_count
-
-
-def test_scatter_dm_view_splits_eq_fi(bundle: DataBundle) -> None:
-    """DM view: two marker traces — DM Eq (blue circle) + DM FI (orange diamond)."""
-    fig = scatter_vol_return(bundle)
-    # DM is the 2nd segment in SCATTER_SEGMENTS -> trace block [8:16].
-    dm_block = list(fig.data[8:16])
-    markers = [t for t in dm_block if getattr(t, "mode", None) == "markers"]
-    assert len(markers) == 2
-    by_name = {t.name: t for t in markers}
-    assert set(by_name) == {"DM Eq", "DM FI"}
-    assert by_name["DM Eq"].marker.color == "#1f77b4"
-    assert by_name["DM Eq"].marker.symbol == "circle"
-    assert by_name["DM FI"].marker.color == "#ff7f0e"
-    assert by_name["DM FI"].marker.symbol == "diamond"
-
-
-def test_scatter_em_view_splits_eq_fi(bundle: DataBundle) -> None:
-    """EM view: EM Eq (green circle) + EM FI (red diamond)."""
-    fig = scatter_vol_return(bundle)
-    # EM is the 3rd segment -> trace block [16:24].
-    em_block = list(fig.data[16:24])
-    markers = [t for t in em_block if getattr(t, "mode", None) == "markers"]
-    by_name = {t.name: t for t in markers}
-    assert set(by_name) == {"EM Eq", "EM FI"}
-    assert by_name["EM Eq"].marker.color == "#2ca02c"
-    assert by_name["EM Eq"].marker.symbol == "circle"
-    assert by_name["EM FI"].marker.color == "#d62728"
-    assert by_name["EM FI"].marker.symbol == "diamond"
-
-
-def test_scatter_full_view_unchanged_region_groups(bundle: DataBundle) -> None:
-    """Full view stays 2 region groups: DM (blue circle) + EM (green circle)."""
-    fig = scatter_vol_return(bundle)
-    full_block = list(fig.data[0:8])
-    markers = [t for t in full_block if getattr(t, "mode", None) == "markers"]
-    by_name = {t.name: t for t in markers}
-    assert set(by_name) == {"DM", "EM"}
-    assert by_name["DM"].marker.color == "#1f77b4"
-    assert by_name["EM"].marker.color == "#2ca02c"
-    assert by_name["DM"].marker.symbol == "circle"
-    assert by_name["EM"].marker.symbol == "circle"
-
-
-def test_scatter_traces_per_segment_still_8(bundle: DataBundle) -> None:
-    from roro.report.figures import _TRACES_PER_SEGMENT  # noqa: PLC0415
-
-    assert _TRACES_PER_SEGMENT == 8
-    fig = scatter_vol_return(bundle)
-    for frame in fig.frames:
-        assert len(frame.data) == 7 * 8
