@@ -15,3 +15,4 @@
 - decision: viz v3 — seg_beta/seg_tercile carry full history (no reindex to scatter window); beta_timeseries x-axis = seg_beta.index; scatters keep 252d slider.
 - decision: viz v3 — scatter axis ranges are per-segment (computed via _segment_axis_range); segment dropdown atomically updates visibility + xaxis.range + yaxis.range + title.
 - constraint: NEVER name Alan's employer / corporate affiliation anywhere (code, docs, commits, README). RoRo is Alan's own personal work; author credit is exactly "Alan Vazquez, CFA" and nothing more.
+- decision: viz v4 — beta_timeseries shades a HYSTERESIS-SMOOTHED tercile (_smooth_regime_hysteresis, _REGIME_CONFIRM_DAYS=21); raw daily tercile is too noisy to shade. Cosmetic only — engine regime output unchanged.
