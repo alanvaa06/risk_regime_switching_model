@@ -50,3 +50,15 @@ def test_frozen() -> None:
 def test_bucket_scheme_round_trip() -> None:
     for name in ("TERCILE", "QUINTILE", "ASYM_20_60_20"):
         assert BucketScheme[name].name == name
+
+
+def test_hmm_defaults_are_off() -> None:
+    from roro.config import EngineConfig
+    from pathlib import Path
+
+    cfg = EngineConfig(data_path=Path("d.xlsx"), output_dir=Path("out"))
+    assert cfg.hmm_enabled is False
+    assert cfg.hmm_refit_interval_days == 21
+    assert cfg.hmm_min_history_days == 252
+    assert cfg.hmm_switching_variance is True
+    assert cfg.hmm_window == "expanding"
