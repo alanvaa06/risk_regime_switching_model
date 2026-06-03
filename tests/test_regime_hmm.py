@@ -4,7 +4,14 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from roro.regime_hmm import _K_REGIMES, _build_model, _filtered_probs, _fit_params
+from roro.regime_hmm import (
+    _K_REGIMES,
+    _UNKNOWN,
+    _build_model,
+    _filtered_probs,
+    _fit_params,
+    walk_forward,
+)
 
 
 def _three_regime_beta(seed: int = 0) -> pd.Series:
@@ -100,3 +107,38 @@ def test_filtered_probs_shape_and_simplex() -> None:
     np.testing.assert_allclose(probs.sum(axis=1), 1.0, atol=1e-6)
     # last block is the high-mean (Risk-on, ordered column 2) state
     assert probs[-1, 2] > probs[-1, 0]
+
+
+def test_walk_forward_is_causal_no_lookahead() -> None:
+    """Label at date t must not change when future data is appended."""
+    beta = _three_regime_beta()
+    cut = 900  # inside the series, past min_history
+    full = walk_forward(
+        beta, refit_interval_days=21, min_history_days=252, switching_variance=True
+    )
+    truncated = walk_forward(
+        beta.iloc[:cut], refit_interval_days=21, min_history_days=252, switching_variance=True
+    )
+    common = truncated["label"].index[truncated["label"] != _UNKNOWN]
+    common = common[common < beta.index[cut - 1]]  # exclude the last refit-boundary day
+    pd.testing.assert_series_equal(
+        full["label"].loc[common], truncated["label"].loc[common], check_names=False
+    )
+
+
+def test_walk_forward_cold_start_is_unknown() -> None:
+    beta = _three_regime_beta()
+    out = walk_forward(
+        beta, refit_interval_days=21, min_history_days=252, switching_variance=True
+    )
+    assert (out["label"].iloc[:252] == _UNKNOWN).all()
+    assert out["cold_start"].iloc[:252].all()
+
+
+def test_walk_forward_recovers_known_regimes() -> None:
+    beta = _three_regime_beta()
+    out = walk_forward(
+        beta, refit_interval_days=21, min_history_days=252, switching_variance=True
+    )
+    tail = out["label"].iloc[-200:]
+    assert (tail == "Risk-on").mean() > 0.8

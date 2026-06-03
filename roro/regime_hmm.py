@@ -105,3 +105,66 @@ def _filtered_probs(
     if raw.shape[0] == _K_REGIMES and raw.shape[1] != _K_REGIMES:
         raw = raw.T
     return raw[:, fit.perm]
+
+
+def walk_forward(
+    beta: pd.Series,
+    *,
+    refit_interval_days: int,
+    min_history_days: int,
+    switching_variance: bool,
+) -> dict[str, object]:
+    """Causal per-segment HMM labels over the full beta index.
+
+    Returns a dict with keys: state, label, prob_risk_off, prob_transitional,
+    prob_risk_on, confidence, cold_start, refit_dates. Each value (except
+    refit_dates: list[Timestamp]) is a pandas object aligned to beta.index.
+
+    Refit clock: every refit_interval_days (trading days) starting at
+    min_history_days, params are re-estimated on beta[:t]. Filter clock: daily.
+    Within a refit block [r, r'), filtered probs come from one .filter() over
+    beta[:r'] with params(beta[:r]) (causal). NaN beta rows are dropped before
+    fitting and emitted as Unknown.
+    """
+    full_index = beta.index
+    clean = beta.dropna()
+    n = len(clean)
+
+    probs = np.full((n, _K_REGIMES), np.nan)
+    cold = np.ones(n, dtype=bool)
+    refit_dates: list[pd.Timestamp] = []
+
+    last_good: _FitResult | None = None
+    r = min_history_days
+    while r < n:
+        block_end = min(r + refit_interval_days, n)
+        fit = _fit_params(clean.iloc[:r], switching_variance=switching_variance)
+        if fit.converged:
+            last_good = fit
+            refit_dates.append(pd.Timestamp(clean.index[r]))
+        used = fit if fit.converged else last_good
+        if used is not None:
+            block_probs = _filtered_probs(
+                clean.iloc[:block_end], used, switching_variance=switching_variance
+            )
+            probs[r:block_end] = block_probs[r:block_end]
+            cold[r:block_end] = False
+        r = block_end
+
+    state_idx = np.where(np.isnan(probs).any(axis=1), -1, probs.argmax(axis=1))
+    labels = np.array([_ORDERED_LABELS[i] if i >= 0 else _UNKNOWN for i in state_idx])
+    confidence = np.where(np.isnan(probs).any(axis=1), np.nan, probs.max(axis=1))
+
+    def _series(values: np.ndarray) -> pd.Series:  # type: ignore[type-arg]
+        return pd.Series(values, index=clean.index).reindex(full_index)
+
+    return {
+        "state": _series(np.where(state_idx < 0, np.nan, state_idx)),
+        "label": _series(labels).fillna(_UNKNOWN),
+        "prob_risk_off": _series(probs[:, 0]),
+        "prob_transitional": _series(probs[:, 1]),
+        "prob_risk_on": _series(probs[:, 2]),
+        "confidence": _series(confidence),
+        "cold_start": _series(cold).fillna(True).astype(bool),
+        "refit_dates": refit_dates,
+    }
