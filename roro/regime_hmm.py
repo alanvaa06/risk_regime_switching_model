@@ -46,17 +46,21 @@ def _fit_params(beta: pd.Series, *, switching_variance: bool) -> _FitResult:
     np.ndarray.  The regime-mean positions are read via model.param_names so
     that the extraction is robust to any ordering variation.
     """
+    # Build model BEFORE the try so the exception path can size the sentinel.
     model = _build_model(beta, switching_variance=switching_variance)
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         try:
             res = model.fit(maxiter=200, disp=False)
         except Exception:  # noqa: BLE001 - degenerate EM -> caller falls back
-            nan = np.full(_K_REGIMES, np.nan)
+            # FIX 2: size sentinel by the model's actual param vector length so
+            # that _filtered_probs can call model.filter(fit.params) without a
+            # shape mismatch.
+            nan_params = np.full(len(model.param_names), np.nan)
             return _FitResult(
-                params=nan,
+                params=nan_params,
                 perm=np.arange(_K_REGIMES),
-                means=nan,
+                means=np.full(_K_REGIMES, np.nan),
                 converged=False,
             )
 
@@ -68,7 +72,12 @@ def _fit_params(beta: pd.Series, *, switching_variance: bool) -> _FitResult:
         [float(raw_params[param_names.index(f"const[{i}]")]) for i in range(_K_REGIMES)]
     )
 
-    converged = bool(np.all(np.isfinite(raw_params))) and not np.any(np.isnan(means))
+    # FIX 1: AND in statsmodels' own convergence verdict.  A fit that exhausts
+    # maxiter returns finite but meaningless params; mle_retvals['converged']
+    # catches that case.  The isnan(means) term is redundant once raw_params are
+    # all finite, so it is dropped.
+    sm_converged = bool(res.mle_retvals.get("converged", True))
+    converged = sm_converged and bool(np.all(np.isfinite(raw_params)))
     perm = np.argsort(means)  # ascending; perm[0] = lowest-mean (Risk-off)
     return _FitResult(
         params=raw_params,
