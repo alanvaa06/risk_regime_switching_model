@@ -16,3 +16,6 @@
 - decision: viz v3 — scatter axis ranges are per-segment (computed via _segment_axis_range); segment dropdown atomically updates visibility + xaxis.range + yaxis.range + title.
 - constraint: NEVER name Alan's employer / corporate affiliation anywhere (code, docs, commits, README). RoRo is Alan's own personal work; author credit is exactly "Alan Vazquez, CFA" and nothing more.
 - decision: viz v4 — beta_timeseries shades a HYSTERESIS-SMOOTHED tercile (_smooth_regime_hysteresis, _REGIME_CONFIRM_DAYS=21); raw daily tercile is too noisy to shade. Cosmetic only — engine regime output unchanged.
+- decision: v1.1 regime upgrade = 3-state Markov-switching HMM on β (mean+var switching, statsmodels MarkovRegression), filtered + point-in-time monthly refit (causal-by-construction inside roro/regime_hmm.py), runs PARALLEL to percentile classifier (hmm_enabled off by default). Spec: docs/superpowers/specs/2026-06-03-roro-hmm-regime-design.md.
+- decision: HMM becomes production default only if it passes all 6 S9 gates AND improves G5 (stability) without regressing G3 (8/8 known events). Else percentile stays default, HMM ships as overlay.
+- decision: HMM state ordering by fitted mean β ascending (lowest=Risk-off) every refit — mandatory fix for EM label-switching across refits.
