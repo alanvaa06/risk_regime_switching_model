@@ -85,3 +85,23 @@ def _fit_params(beta: pd.Series, *, switching_variance: bool) -> _FitResult:
         means=means,
         converged=converged,
     )
+
+
+def _filtered_probs(
+    beta: pd.Series, fit: _FitResult, *, switching_variance: bool
+) -> np.ndarray:  # type: ignore[type-arg]
+    """Causal filtered P(state_t | beta_{0:t}) as a (T, 3) array in ORDERED columns.
+
+    Columns are [Risk-off, Transitional, Risk-on] via fit.perm. Uses .filter()
+    with frozen params (no re-estimation). Filtering is causal: row t uses only
+    beta[:t].
+    """
+    model = _build_model(beta, switching_variance=switching_variance)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        res = model.filter(fit.params)
+    raw = np.asarray(res.filtered_marginal_probabilities)
+    # Normalize to (T, k) regardless of statsmodels minor-version orientation.
+    if raw.shape[0] == _K_REGIMES and raw.shape[1] != _K_REGIMES:
+        raw = raw.T
+    return raw[:, fit.perm]

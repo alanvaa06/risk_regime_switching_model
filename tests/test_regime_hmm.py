@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from roro.regime_hmm import _K_REGIMES, _build_model, _fit_params
+from roro.regime_hmm import _K_REGIMES, _build_model, _filtered_probs, _fit_params
 
 
 def _three_regime_beta(seed: int = 0) -> pd.Series:
@@ -90,3 +90,13 @@ def test_exception_sentinel_matches_param_length() -> None:
         assert expected_len != _K_REGIMES, (
             f"sentinel length ({expected_len}) must differ from _K_REGIMES ({_K_REGIMES})"
         )
+
+
+def test_filtered_probs_shape_and_simplex() -> None:
+    beta = _three_regime_beta()
+    fit = _fit_params(beta, switching_variance=True)
+    probs = _filtered_probs(beta, fit, switching_variance=True)
+    assert probs.shape == (len(beta), 3)
+    np.testing.assert_allclose(probs.sum(axis=1), 1.0, atol=1e-6)
+    # last block is the high-mean (Risk-on, ordered column 2) state
+    assert probs[-1, 2] > probs[-1, 0]
