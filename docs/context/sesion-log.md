@@ -6,3 +6,4 @@
 - 2026-05-28: viz v3 — per-segment scatter axis ranges, legend top-left overlay, slider clear of axis title, beta time-series now spans full history, hover behavior locked with a test.
 - 2026-05-28: viz v4 — regime bands legible: 21-day hysteresis smoothing collapses daily tercile flicker into broad blocks; opacity raised to 0.28/0.15/0.28. Cosmetic only; engine regimes.csv unchanged.
 - 2026-06-03: pivot — defer S8 dashboard. Brainstormed HMM/Markov-switching regime classifier (3-state, β mean+var switching, statsmodels, filtered+point-in-time monthly refit, coexist with percentile). Spec written: docs/superpowers/specs/2026-06-03-roro-hmm-regime-design.md. Branch feat/hmm-regime.
+- 2026-06-03: Task 4 — roro/regime_hmm.py + tests/test_regime_hmm.py committed (9130a23). TDD green; discovered statsmodels 0.14.x res.params is ndarray not Series — extraction uses model.param_names.

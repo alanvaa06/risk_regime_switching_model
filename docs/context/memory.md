@@ -19,3 +19,4 @@
 - decision: v1.1 regime upgrade = 3-state Markov-switching HMM on β (mean+var switching, statsmodels MarkovRegression), filtered + point-in-time monthly refit (causal-by-construction inside roro/regime_hmm.py), runs PARALLEL to percentile classifier (hmm_enabled off by default). Spec: docs/superpowers/specs/2026-06-03-roro-hmm-regime-design.md.
 - decision: HMM becomes production default only if it passes all 6 S9 gates AND improves G5 (stability) without regressing G3 (8/8 known events). Else percentile stays default, HMM ships as overlay.
 - decision: HMM state ordering by fitted mean β ascending (lowest=Risk-off) every refit — mandatory fix for EM label-switching across refits.
+- constraint: statsmodels 0.14.x MarkovRegression.fit() returns res.params as plain np.ndarray (NOT pandas Series); use model.param_names list + array indexing to extract const[i] values.
