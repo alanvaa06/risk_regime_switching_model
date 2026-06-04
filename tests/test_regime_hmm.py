@@ -165,3 +165,14 @@ def test_classify_hmm_returns_frame_with_segments() -> None:
     assert frame.thin_cut_flag["LatAm"].iloc[-1]
     assert not frame.thin_cut_flag["global"].iloc[-1]
     assert "global" in frame.refit_dates
+
+
+def test_degenerate_beta_does_not_crash_or_warn() -> None:
+    # Near-constant beta: 3-state fit is ill-posed; must degrade gracefully.
+    idx = pd.bdate_range("2010-01-01", periods=800)
+    beta = pd.Series(np.full(800, 0.5) + 1e-9, index=idx, name="beta")
+    out = walk_forward(
+        beta, refit_interval_days=42, min_history_days=252, switching_variance=True
+    )
+    # No exception, output spans the full index, no warning escaped to error.
+    assert len(out["label"]) == len(beta)
