@@ -165,6 +165,8 @@ def walk_forward(
         "prob_transitional": _series(probs[:, 1]),
         "prob_risk_on": _series(probs[:, 2]),
         "confidence": _series(confidence),
-        "cold_start": _series(cold).fillna(True).astype(bool),
+        "cold_start": pd.Series(cold, index=clean.index)
+        .reindex(full_index, fill_value=True)
+        .astype(bool),
         "refit_dates": refit_dates,
     }
