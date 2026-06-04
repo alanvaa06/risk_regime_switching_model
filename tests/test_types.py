@@ -10,6 +10,7 @@ from roro.types import (
     BetaFrame,
     CorrelationFrame,
     FredFrame,
+    HmmRegimeFrame,
     PriceFrame,
     RegimeFrame,
     ReturnsFrame,
@@ -53,8 +54,6 @@ def test_fred_frame_carries_fingerprint() -> None:
 
 
 def test_hmm_regime_frame_constructs() -> None:
-    from roro.types import HmmRegimeFrame
-
     idx = pd.bdate_range("2014-01-01", periods=3)
     df = pd.DataFrame({"global": [0, 1, 2]}, index=idx)
     f = HmmRegimeFrame(

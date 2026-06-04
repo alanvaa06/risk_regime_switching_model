@@ -53,9 +53,6 @@ def test_bucket_scheme_round_trip() -> None:
 
 
 def test_hmm_defaults_are_off() -> None:
-    from roro.config import EngineConfig
-    from pathlib import Path
-
     cfg = EngineConfig(data_path=Path("d.xlsx"), output_dir=Path("out"))
     assert cfg.hmm_enabled is False
     assert cfg.hmm_refit_interval_days == 21
