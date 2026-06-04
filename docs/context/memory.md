@@ -20,3 +20,5 @@
 - decision: HMM becomes production default only if it passes all 6 S9 gates AND improves G5 (stability) without regressing G3 (8/8 known events). Else percentile stays default, HMM ships as overlay.
 - decision: HMM state ordering by fitted mean β ascending (lowest=Risk-off) every refit — mandatory fix for EM label-switching across refits.
 - constraint: statsmodels 0.14.x MarkovRegression.fit() returns res.params as plain np.ndarray (NOT pandas Series); use model.param_names list + array indexing to extract const[i] values.
+- decision: T15 real-data backtest (2008–2026) → percentile STAYS production default; HMM ships off-by-default overlay. HMM passed no gate and regressed G3 (events 6/8 vs percentile 7/8), but HALVED G5 flicker (9 vs 18 transitions/calm-qtr) — thesis validated directionally, not enough for the ≤2 bar. Evidence: outputs/hmm_eval/acceptance_compare.json.
+- decision: external-corr gates (G1/G2) are method-shared in v1.1 (read percentile-derived validation), so they do not discriminate HMM vs percentile — discriminating gates are G3/G4/G5. Wire HMM through validation in a future rev to make G1/G2 method-specific.
