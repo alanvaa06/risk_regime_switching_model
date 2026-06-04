@@ -19,6 +19,7 @@ from roro.types import (
     BetaBySegment,
     CorrelationFrame,
     FredFrame,
+    HmmRegimeFrame,
     PriceFrame,
     RegimeFrame,
     RunResult,
@@ -126,6 +127,10 @@ def write_run(
     _write_validation(result.validation, tmp / "external_validation.csv")
     _write_alerts(result.alerts, tmp / "alerts.csv")
     _write_tripwire(result.tripwire, tmp / "tripwire.csv")
+
+    if result.regime_hmm is not None:
+        _write_regime_hmm(result.regime_hmm, tmp / "regimes_hmm.csv")
+        _write_hmm_refit_log(result.regime_hmm, tmp / "hmm_refit_log.csv")
 
     snapshot = _build_snapshot(result, run_date=run_date, as_of_data_date=as_of_data_date)
     (tmp / "snapshot.json").write_text(
@@ -251,10 +256,50 @@ def _write_tripwire(bbs: BetaBySegment, path: Path) -> None:
     _write_beta(bbs, path)
 
 
+def _write_regime_hmm(hf: HmmRegimeFrame, path: Path) -> None:
+    cols = (
+        "date,segment,state,label,p_risk_off,p_transitional,"
+        "p_risk_on,confidence,cold_start,thin_cut\n"
+    )
+    if hf.label.empty:
+        path.write_text(cols, encoding="utf-8")
+        return
+    merged = _melt_with_date(hf.label, "label")
+    for name, frame in (
+        ("state", hf.state),
+        ("p_risk_off", hf.prob_risk_off),
+        ("p_transitional", hf.prob_transitional),
+        ("p_risk_on", hf.prob_risk_on),
+        ("confidence", hf.confidence),
+        ("cold_start", hf.cold_start_flag),
+        ("thin_cut", hf.thin_cut_flag),
+    ):
+        merged = merged.merge(_melt_with_date(frame, name), on=["date", "segment"], how="left")
+    merged.to_csv(path, index=False)
+
+
+def _write_hmm_refit_log(hf: HmmRegimeFrame, path: Path) -> None:
+    rows = [
+        {"segment": seg, "refit_date": d}
+        for seg, dates in hf.refit_dates.items()
+        for d in dates
+    ]
+    df = pd.DataFrame(rows, columns=["segment", "refit_date"])
+    df.to_csv(path, index=False)
+
+
+def _safe_float(value: Any) -> float | None:
+    try:
+        f = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if pd.isna(f) else f
+
+
 def _build_snapshot(
     result: RunResult, *, run_date: str, as_of_data_date: str
 ) -> dict[str, Any]:
-    return {
+    snapshot: dict[str, Any] = {
         "run_date": run_date,
         "as_of_data_date": as_of_data_date,
         "methodology_version": result.config.methodology_version,
@@ -263,3 +308,17 @@ def _build_snapshot(
         "code_version": result.code_version,
         "warnings": result.warnings,
     }
+    hf = result.regime_hmm
+    if hf is not None and not hf.label.empty:
+        last = hf.label.index[-1]
+        snapshot["regime_hmm"] = {
+            seg: {
+                "label": hf.label.loc[last, seg],
+                "p_risk_off": _safe_float(hf.prob_risk_off.loc[last, seg]),
+                "p_transitional": _safe_float(hf.prob_transitional.loc[last, seg]),
+                "p_risk_on": _safe_float(hf.prob_risk_on.loc[last, seg]),
+                "confidence": _safe_float(hf.confidence.loc[last, seg]),
+            }
+            for seg in hf.label.columns
+        }
+    return snapshot

@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
@@ -11,6 +12,7 @@ from roro.types import (
     BetaBySegment,
     BetaFrame,
     CorrelationFrame,
+    HmmRegimeFrame,
     RegimeFrame,
     ReturnsFrame,
     RunResult,
@@ -113,3 +115,45 @@ def test_write_run_force_overwrites(tmp_path: Path) -> None:
     write_run(
         result, run_date="2026-05-27", out_dir=out_root, as_of_data_date="2026-05-26", force=True
     )
+
+
+def _result_with_hmm(out_dir: Path) -> RunResult:
+    base = _empty_result(out_dir)
+    idx = pd.bdate_range("2026-05-20", periods=3)
+    lab = pd.DataFrame({"global": ["Risk-off", "Transitional", "Risk-on"]}, index=idx)
+    num = pd.DataFrame({"global": [0.2, 0.5, 0.8]}, index=idx)
+    state = pd.DataFrame({"global": [0, 1, 2]}, index=idx)
+    flag = pd.DataFrame({"global": [False, False, False]}, index=idx)
+    hmm = HmmRegimeFrame(
+        state=state, label=lab,
+        prob_risk_off=num, prob_transitional=num, prob_risk_on=num,
+        confidence=num, n_per_segment=pd.DataFrame({"global": [20, 20, 20]}, index=idx),
+        thin_cut_flag=flag, cold_start_flag=flag,
+        refit_dates={"global": [idx[0]]},
+    )
+    return replace(base, regime_hmm=hmm)
+
+
+def test_write_run_emits_hmm_artifacts(tmp_path: Path) -> None:
+    out_root = tmp_path / "outputs"
+    result = _result_with_hmm(out_root)
+    out = write_run(
+        result, run_date="2026-06-03", out_dir=out_root, as_of_data_date="2026-06-03", force=True
+    )
+    assert (out / "regimes_hmm.csv").exists()
+    assert (out / "hmm_refit_log.csv").exists()
+    df = pd.read_csv(out / "regimes_hmm.csv")
+    assert {"date", "segment", "label", "p_risk_off"}.issubset(df.columns)
+    snap = json.loads((out / "snapshot.json").read_text())
+    assert snap["regime_hmm"]["global"]["label"] == "Risk-on"  # last row
+
+
+def test_write_run_no_hmm_artifacts_when_disabled(tmp_path: Path) -> None:
+    out_root = tmp_path / "outputs2"
+    result = _empty_result(out_root)  # regime_hmm is None
+    out = write_run(
+        result, run_date="2026-06-03", out_dir=out_root, as_of_data_date="2026-06-03", force=True
+    )
+    assert not (out / "regimes_hmm.csv").exists()
+    snap = json.loads((out / "snapshot.json").read_text())
+    assert "regime_hmm" not in snap  # key omitted entirely when HMM disabled
