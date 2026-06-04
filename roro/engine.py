@@ -138,7 +138,9 @@ def run(
     )
 
     # 9) Alerts: bucket transitions, disagreement events, validation degradation.
-    alerts = detect_alerts(regime=regime, correlation=correlation, validation=validation)
+    alerts = detect_alerts(
+        regime=regime, correlation=correlation, validation=validation, regime_hmm=regime_hmm
+    )
 
     # 10) Fingerprint inputs + assemble the RunResult.
     fingerprint = compute_data_fingerprint(cfg.data_path)

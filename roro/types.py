@@ -98,6 +98,11 @@ class AlertSet:
     bucket_transitions: pd.DataFrame
     disagreement_events: pd.DataFrame
     validation_degradation: pd.DataFrame
+    hmm_bucket_transitions: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(
+            columns=["date", "segment", "from_bucket", "to_bucket"]
+        )
+    )
 
 
 @dataclass(frozen=True)
