@@ -1,17 +1,21 @@
 import warnings
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import pytest
 
+from roro.config import EngineConfig
 from roro.regime_hmm import (
     _K_REGIMES,
     _UNKNOWN,
     _build_model,
     _filtered_probs,
     _fit_params,
+    classify_hmm,
     walk_forward,
 )
+from roro.types import BetaBySegment, BetaFrame
 
 
 def _three_regime_beta(seed: int = 0) -> pd.Series:
@@ -142,3 +146,22 @@ def test_walk_forward_recovers_known_regimes() -> None:
     )
     tail = out["label"].iloc[-200:]
     assert (tail == "Risk-on").mean() > 0.8
+
+
+def _bbs_from_beta(beta: pd.Series) -> BetaBySegment:
+    cap = pd.DataFrame({"beta": beta, "r2": 0.5, "n": 20}, index=beta.index)
+    bf = BetaFrame(cap_wtd=cap, eq_wtd=cap, slope_spread=pd.Series(0.0, index=beta.index))
+    return BetaBySegment(by_segment={"global": bf, "LatAm": bf})
+
+
+def test_classify_hmm_returns_frame_with_segments() -> None:
+    beta = _three_regime_beta()
+    cfg = EngineConfig(
+        data_path=Path("d.xlsx"), output_dir=Path("out"),
+        hmm_enabled=True, hmm_min_history_days=252, hmm_refit_interval_days=42,
+    )
+    frame = classify_hmm(_bbs_from_beta(beta), cfg=cfg, thin_cuts=frozenset({"LatAm"}))
+    assert set(frame.label.columns) == {"global", "LatAm"}
+    assert frame.thin_cut_flag["LatAm"].iloc[-1]
+    assert not frame.thin_cut_flag["global"].iloc[-1]
+    assert "global" in frame.refit_dates

@@ -9,10 +9,14 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
+from typing import cast
 
 import numpy as np
 import pandas as pd
 from statsmodels.tsa.regime_switching.markov_regression import MarkovRegression
+
+from roro.config import EngineConfig
+from roro.types import BetaBySegment, HmmRegimeFrame
 
 _K_REGIMES = 3
 _ORDERED_LABELS = ("Risk-off", "Transitional", "Risk-on")
@@ -170,3 +174,54 @@ def walk_forward(
         .astype(bool),
         "refit_dates": refit_dates,
     }
+
+
+def classify_hmm(
+    bbs: BetaBySegment,
+    *,
+    cfg: EngineConfig,
+    thin_cuts: frozenset[str],
+) -> HmmRegimeFrame:
+    """Run the walk-forward HMM per segment; assemble an HmmRegimeFrame."""
+    state: dict[str, object] = {}
+    label: dict[str, object] = {}
+    p_off: dict[str, object] = {}
+    p_tr: dict[str, object] = {}
+    p_on: dict[str, object] = {}
+    conf: dict[str, object] = {}
+    cold: dict[str, object] = {}
+    nseg: dict[str, object] = {}
+    thin: dict[str, object] = {}
+    refit_dates: dict[str, list[pd.Timestamp]] = {}
+
+    for cut, bf in bbs.by_segment.items():
+        beta = bf.cap_wtd["beta"]
+        out = walk_forward(
+            beta,
+            refit_interval_days=cfg.hmm_refit_interval_days,
+            min_history_days=cfg.hmm_min_history_days,
+            switching_variance=cfg.hmm_switching_variance,
+        )
+        state[cut] = out["state"]
+        label[cut] = out["label"]
+        p_off[cut] = out["prob_risk_off"]
+        p_tr[cut] = out["prob_transitional"]
+        p_on[cut] = out["prob_risk_on"]
+        conf[cut] = out["confidence"]
+        cold[cut] = out["cold_start"]
+        nseg[cut] = bf.cap_wtd["n"]
+        thin[cut] = pd.Series(cut in thin_cuts, index=beta.index)
+        refit_dates[cut] = cast(list[pd.Timestamp], out["refit_dates"])
+
+    return HmmRegimeFrame(
+        state=pd.DataFrame(state),
+        label=pd.DataFrame(label),
+        prob_risk_off=pd.DataFrame(p_off),
+        prob_transitional=pd.DataFrame(p_tr),
+        prob_risk_on=pd.DataFrame(p_on),
+        confidence=pd.DataFrame(conf),
+        n_per_segment=pd.DataFrame(nseg),
+        thin_cut_flag=pd.DataFrame(thin),
+        cold_start_flag=pd.DataFrame(cold),
+        refit_dates=refit_dates,
+    )
