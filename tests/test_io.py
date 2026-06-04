@@ -144,6 +144,11 @@ def test_write_run_emits_hmm_artifacts(tmp_path: Path) -> None:
     assert (out / "hmm_refit_log.csv").exists()
     df = pd.read_csv(out / "regimes_hmm.csv")
     assert {"date", "segment", "label", "p_risk_off"}.issubset(df.columns)
+    expected_cols = [
+        "date", "segment", "state", "label", "p_risk_off", "p_transitional",
+        "p_risk_on", "confidence", "cold_start", "thin_cut"
+    ]
+    assert list(df.columns) == expected_cols
     snap = json.loads((out / "snapshot.json").read_text())
     assert snap["regime_hmm"]["global"]["label"] == "Risk-on"  # last row
 
@@ -155,5 +160,6 @@ def test_write_run_no_hmm_artifacts_when_disabled(tmp_path: Path) -> None:
         result, run_date="2026-06-03", out_dir=out_root, as_of_data_date="2026-06-03", force=True
     )
     assert not (out / "regimes_hmm.csv").exists()
+    assert not (out / "hmm_refit_log.csv").exists()
     snap = json.loads((out / "snapshot.json").read_text())
     assert "regime_hmm" not in snap  # key omitted entirely when HMM disabled

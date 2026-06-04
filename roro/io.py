@@ -275,6 +275,10 @@ def _write_regime_hmm(hf: HmmRegimeFrame, path: Path) -> None:
         ("thin_cut", hf.thin_cut_flag),
     ):
         merged = merged.merge(_melt_with_date(frame, name), on=["date", "segment"], how="left")
+    merged = merged[
+        ["date", "segment", "state", "label", "p_risk_off", "p_transitional",
+         "p_risk_on", "confidence", "cold_start", "thin_cut"]
+    ]
     merged.to_csv(path, index=False)
 
 
