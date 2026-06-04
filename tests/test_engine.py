@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from roro.config import EngineConfig
 from roro.engine import run
@@ -16,6 +17,7 @@ def _seeded_fred() -> MockFredClient:
     return MockFredClient(seeded={sid: pd.Series(20.0, index=idx) for sid in FRED_SERIES_IDS})
 
 
+@pytest.mark.slow
 def test_engine_populates_regime_hmm_when_enabled(tiny_xlsx: Path, tmp_path: Path) -> None:
     cfg = EngineConfig(
         data_path=tiny_xlsx,

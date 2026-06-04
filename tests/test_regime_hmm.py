@@ -113,6 +113,7 @@ def test_filtered_probs_shape_and_simplex() -> None:
     assert probs[-1, 2] > probs[-1, 0]
 
 
+@pytest.mark.slow
 def test_walk_forward_is_causal_no_lookahead() -> None:
     """Label at date t must not change when future data is appended."""
     beta = _three_regime_beta()
@@ -130,6 +131,7 @@ def test_walk_forward_is_causal_no_lookahead() -> None:
     )
 
 
+@pytest.mark.slow
 def test_walk_forward_cold_start_is_unknown() -> None:
     beta = _three_regime_beta()
     out = walk_forward(
@@ -139,6 +141,7 @@ def test_walk_forward_cold_start_is_unknown() -> None:
     assert out["cold_start"].iloc[:252].all()
 
 
+@pytest.mark.slow
 def test_walk_forward_recovers_known_regimes() -> None:
     beta = _three_regime_beta()
     out = walk_forward(
@@ -154,6 +157,7 @@ def _bbs_from_beta(beta: pd.Series) -> BetaBySegment:
     return BetaBySegment(by_segment={"global": bf, "LatAm": bf})
 
 
+@pytest.mark.slow
 def test_classify_hmm_returns_frame_with_segments() -> None:
     beta = _three_regime_beta()
     cfg = EngineConfig(
