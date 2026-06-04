@@ -76,7 +76,9 @@ def run_backtest(
 
     Writes ``acceptance_report.json``, ``event_recognition.csv``,
     ``validation_corr_history.csv``, and ``stability_metrics.csv`` to
-    ``cfg.output_dir``. Returns the in-memory report dict.
+    ``cfg.output_dir``. When HMM is enabled also writes
+    ``acceptance_report_hmm.json`` and ``acceptance_compare.json``.
+    Returns the in-memory percentile report dict.
     """
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
     result = engine_run(
@@ -86,7 +88,11 @@ def run_backtest(
         as_of_data_date=end,
         force=True,
     )
-    gates = _evaluate_gates(result)
+    gates = _evaluate_gates(
+        result,
+        labels=result.regime.tercile,
+        transitions=result.alerts.bucket_transitions,
+    )
     report: dict[str, Any] = {
         "start": start,
         "end": end,
@@ -97,13 +103,39 @@ def run_backtest(
     (cfg.output_dir / "acceptance_report.json").write_text(
         json.dumps(report, indent=2, default=str), encoding="utf-8"
     )
+
+    if result.regime_hmm is not None:
+        hmm_gates = _evaluate_gates(
+            result,
+            labels=result.regime_hmm.label,
+            transitions=result.alerts.hmm_bucket_transitions,
+        )
+        hmm_report = {
+            **report,
+            "method": "hmm",
+            "gates": hmm_gates,
+            "all_passed": all(bool(v.get("passed", False)) for v in hmm_gates.values()),
+        }
+        (cfg.output_dir / "acceptance_report_hmm.json").write_text(
+            json.dumps(hmm_report, indent=2, default=str), encoding="utf-8"
+        )
+        compare = {g: {"percentile": gates[g], "hmm": hmm_gates[g]} for g in gates}
+        (cfg.output_dir / "acceptance_compare.json").write_text(
+            json.dumps(compare, indent=2, default=str), encoding="utf-8"
+        )
+
     _write_event_recognition(cfg.output_dir / "event_recognition.csv")
     _write_validation_history(result, cfg.output_dir / "validation_corr_history.csv")
     _write_stability_metrics(result, cfg.output_dir / "stability_metrics.csv")
     return report
 
 
-def _evaluate_gates(result: RunResult) -> dict[str, dict[str, Any]]:
+def _evaluate_gates(
+    result: RunResult,
+    *,
+    labels: pd.DataFrame,
+    transitions: pd.DataFrame,
+) -> dict[str, dict[str, Any]]:
     gates: dict[str, dict[str, Any]] = {}
     gates["G1_vix"] = _gate_external_corr(
         result,
@@ -117,9 +149,9 @@ def _evaluate_gates(result: RunResult) -> dict[str, dict[str, Any]]:
         rho_min=_G2_BBB_RHO_MIN,
         fraction_min=_G2_FRACTION_MIN,
     )
-    gates["G3_events"] = _gate_events(result)
-    gates["G4_segmentation_lift"] = _gate_segmentation_lift(result)
-    gates["G5_stability"] = _gate_stability(result)
+    gates["G3_events"] = _gate_events(labels)
+    gates["G4_segmentation_lift"] = _gate_segmentation_lift(labels)
+    gates["G5_stability"] = _gate_stability(result, transitions)
     gates["G6_internal"] = _gate_internal_consistency(result)
     return gates
 
@@ -142,8 +174,7 @@ def _gate_external_corr(
     return {"passed": bool(fraction >= fraction_min), "fraction_above": fraction}
 
 
-def _gate_events(result: RunResult) -> dict[str, Any]:
-    terc = result.regime.tercile
+def _gate_events(terc: pd.DataFrame) -> dict[str, Any]:
     hits = 0
     details: list[dict[str, Any]] = []
     for event in EVENTS:
@@ -167,8 +198,7 @@ def _gate_events(result: RunResult) -> dict[str, Any]:
     }
 
 
-def _gate_segmentation_lift(result: RunResult) -> dict[str, Any]:
-    terc = result.regime.tercile
+def _gate_segmentation_lift(terc: pd.DataFrame) -> dict[str, Any]:
     if not {"DM_Eq", "EM_Eq"}.issubset(terc.columns):
         return {"passed": False, "reason": "missing DM_Eq/EM_Eq"}
     a = terc["DM_Eq"].map(_TERCILE_ORDINAL).astype(float)
@@ -180,8 +210,7 @@ def _gate_segmentation_lift(result: RunResult) -> dict[str, Any]:
     return {"passed": bool(fraction >= _G4_SEG_FRACTION_MIN), "fraction_with_gap_ge_2": fraction}
 
 
-def _gate_stability(result: RunResult) -> dict[str, Any]:
-    transitions = result.alerts.bucket_transitions
+def _gate_stability(result: RunResult, transitions: pd.DataFrame) -> dict[str, Any]:
     if transitions.empty:
         return {"passed": True, "max_transitions_in_calm_quarter": 0.0}
     daily = result.returns.daily_log_returns
