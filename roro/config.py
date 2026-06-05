@@ -32,6 +32,11 @@ class EngineConfig:
     external_corr_alert_threshold: float = 0.3
     bootstrap_min_days: int = 252
     methodology_version: str = "1.0.0"
+    hmm_enabled: bool = False
+    hmm_refit_interval_days: int = 21
+    hmm_min_history_days: int = 252
+    hmm_switching_variance: bool = True
+    hmm_window: str = "expanding"
     fred_api_key: str | None = None
 
 

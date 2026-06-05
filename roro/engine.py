@@ -17,6 +17,7 @@ from roro.io import (
     load_prices,
     write_run,
 )
+from roro.regime_hmm import classify_hmm
 from roro.regression import compute_beta_by_segment
 from roro.returns import daily_log_returns, ewma_vol, total_return_3m
 from roro.segments import partition
@@ -91,6 +92,13 @@ def run(
         thin_cuts=frozenset({"LatAm"}),
     )
 
+    # 5b) Optional HMM regime classifier (parallel method, off by default).
+    regime_hmm = (
+        classify_hmm(beta, cfg=cfg, thin_cuts=frozenset({"LatAm"}))
+        if cfg.hmm_enabled
+        else None
+    )
+
     # 6) Cross-sectional correlation panel (avg pairwise + PC1 variance share).
     correlation = compute_correlation_panel(
         daily_log_returns_eq=eq_daily,
@@ -130,7 +138,9 @@ def run(
     )
 
     # 9) Alerts: bucket transitions, disagreement events, validation degradation.
-    alerts = detect_alerts(regime=regime, correlation=correlation, validation=validation)
+    alerts = detect_alerts(
+        regime=regime, correlation=correlation, validation=validation, regime_hmm=regime_hmm
+    )
 
     # 10) Fingerprint inputs + assemble the RunResult.
     fingerprint = compute_data_fingerprint(cfg.data_path)
@@ -145,6 +155,7 @@ def run(
         vol=VolFrame(ewma_sigma_annualized=eq_vol),
         beta=beta,
         regime=regime,
+        regime_hmm=regime_hmm,
         correlation=correlation,
         validation=validation,
         tripwire=tripwire,

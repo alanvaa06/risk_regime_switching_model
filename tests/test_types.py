@@ -10,6 +10,7 @@ from roro.types import (
     BetaFrame,
     CorrelationFrame,
     FredFrame,
+    HmmRegimeFrame,
     PriceFrame,
     RegimeFrame,
     ReturnsFrame,
@@ -50,6 +51,18 @@ def test_fred_frame_carries_fingerprint() -> None:
         series_hashes={"VIXCLS": "abc"},
     )
     assert ff.series_hashes["VIXCLS"] == "abc"
+
+
+def test_hmm_regime_frame_constructs() -> None:
+    idx = pd.bdate_range("2014-01-01", periods=3)
+    df = pd.DataFrame({"global": [0, 1, 2]}, index=idx)
+    f = HmmRegimeFrame(
+        state=df, label=df.astype(str), prob_risk_off=df, prob_transitional=df,
+        prob_risk_on=df, confidence=df, n_per_segment=df, thin_cut_flag=df,
+        cold_start_flag=df, refit_dates={"global": [idx[0]]},
+    )
+    assert list(f.label.columns) == ["global"]
+    assert f.refit_dates["global"] == [idx[0]]
 
 
 def test_imports_available() -> None:

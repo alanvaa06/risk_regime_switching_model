@@ -16,6 +16,7 @@ dependencies = [
     "python-dotenv>=1.0,<2.0",
     "plotly>=5.20,<6.0",
     "scipy>=1.11,<2.0",
+    "statsmodels>=0.14,<0.15",
 ]
 
 [project.optional-dependencies]
@@ -67,7 +68,12 @@ ignore_missing_imports = true
 module = "scipy.*"
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = "statsmodels.*"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra -q"
 filterwarnings = ["error"]
+markers = ["slow: long-running benches (deselect with -m 'not slow')"]

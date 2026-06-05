@@ -1,0 +1,13 @@
+# Real-data HMM-vs-percentile evaluation config (Task 15).
+# Production diagnostic params (engine defaults) with the HMM classifier enabled
+# so the backtest scores BOTH methods through the S9 acceptance gates and writes
+# acceptance_compare.json. hmm_enabled here is for EVALUATION only; the engine
+# default remains False.
+data_path: data.xlsx
+output_dir: outputs/hmm_eval
+hmm_enabled: true
+# Quarterly refit for the eval: the cadence-invariance bench showed monthly(21)
+# vs daily(1) label agreement = 0.9966, and the Hamilton filter runs DAILY
+# regardless of refit interval (so event-window detection is unaffected).
+# Quarterly keeps the full-history run within budget with ~identical labels.
+hmm_refit_interval_days: 63
