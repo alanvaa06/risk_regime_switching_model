@@ -14,6 +14,7 @@ from roro.report.figures import (
     BETA_TS_SEGMENTS,
     _ci_band_traces,
     _ols_with_ci,
+    beta_band_lookup,
     beta_timeseries,
     regime_probability_area,
     scatter_beta_return,
@@ -614,3 +615,21 @@ def test_beta_timeseries_smoothing_reduces_rect_count() -> None:
     rect_count = len([s for s in (fig.layout.shapes or []) if s.type == "rect"])
     raw_run_count = len(_regime_runs(tercile))
     assert rect_count < raw_run_count
+
+
+def test_beta_band_lookup_has_both_methods_per_segment() -> None:
+    bundle = _bundle_with_hmm()
+    idx = bundle.seg_hmm_label.index
+    object.__setattr__(
+        bundle, "seg_tercile",
+        pd.DataFrame({"global": ["Risk-on"] * len(idx), "DM": ["Risk-off"] * len(idx)}, index=idx),
+    )
+    object.__setattr__(
+        bundle, "seg_beta",
+        pd.DataFrame({"global": [1.0] * len(idx), "DM": [1.0] * len(idx)}, index=idx),
+    )
+    lookup = beta_band_lookup(bundle)
+    assert set(lookup["global"].keys()) == {"percentile", "hmm"}
+    shp = lookup["global"]["hmm"][0]
+    assert isinstance(shp["x0"], str)
+    assert shp["type"] == "rect"

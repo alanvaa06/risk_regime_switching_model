@@ -655,6 +655,53 @@ def beta_timeseries(bundle: DataBundle) -> go.Figure:
     return fig
 
 
+def _band_shapes(labels: pd.Series, *, smooth: bool) -> list[dict[str, object]]:
+    """Regime-run rectangles as JSON-serializable shape dicts (x0/x1 = ISO date strings)."""
+    series = _smooth_regime_hysteresis(labels, _REGIME_CONFIRM_DAYS) if smooth else labels
+    shapes: list[dict[str, object]] = []
+    for start, end, label in _regime_runs(series):
+        color = REGIME_COLORS.get(label)
+        if color is None:
+            continue
+        shapes.append(
+            {
+                "type": "rect",
+                "xref": "x",
+                "yref": "paper",
+                "x0": str(pd.Timestamp(start).date()),
+                "x1": str(pd.Timestamp(end).date()),
+                "y0": 0,
+                "y1": 1,
+                "fillcolor": color,
+                "line": {"width": 0},
+                "layer": "below",
+            }
+        )
+    return shapes
+
+
+def beta_band_lookup(bundle: DataBundle) -> dict[str, dict[str, list[dict[str, object]]]]:
+    """Per-segment precomputed band shapes for both methods, keyed for the JS toggle.
+
+    Percentile = hysteresis-smoothed tercile runs (matches beta_timeseries).
+    HMM = raw label runs (no smoothing — HMM is persistent by construction).
+    Only segments present in seg_beta are included.
+    """
+    assert bundle.seg_hmm_label is not None  # caller guards
+    out: dict[str, dict[str, list[dict[str, object]]]] = {}
+    for seg in BETA_TS_SEGMENTS:
+        if seg not in bundle.seg_beta.columns:
+            continue
+        percentile: list[dict[str, object]] = []
+        if seg in bundle.seg_tercile.columns:
+            percentile = _band_shapes(bundle.seg_tercile[seg], smooth=True)
+        hmm: list[dict[str, object]] = []
+        if seg in bundle.seg_hmm_label.columns:
+            hmm = _band_shapes(bundle.seg_hmm_label[seg], smooth=False)
+        out[seg] = {"percentile": percentile, "hmm": hmm}
+    return out
+
+
 _PROB_TRACE_ORDER: tuple[tuple[str, str], ...] = (
     ("Risk-off", "seg_hmm_p_off"),
     ("Transitional", "seg_hmm_p_tr"),
