@@ -3,7 +3,7 @@
 > A daily, reproducible, academically-anchored classifier of the global "risk-on / risk-off" (RoRo) state, estimated from the cross-sectional relationship between realized return and realized volatility across 64 country-level index series, segmented into 10 cuts, and validated against external risk-cycle proxies and internal composite aggregates.
 
 **Author:** Alan Vazquez, CFA
-**Status:** v1.0 — *diagnostic only* (no predictive layer)
+**Status:** v1.1 — *diagnostic only* (no predictive layer). Adds an optional HMM / Markov-switching regime overlay (off by default; the percentile classifier remains the production default) and an expanded interactive report (HMM filtered-probability view + percentile↔HMM band toggle + volatility-breadth heatmaps).
 **License of data:** proprietary (`data.xlsx` is git-ignored); external proxies are free (FRED).
 
 ![Segment β with regime bands](docs/assets/report_beta_timeseries.png)
@@ -162,6 +162,14 @@ For each segment, the current slope is ranked against its **trailing 5-year roll
 
 The tercile-as-headline decision is deliberate: finer buckets increase decision granularity but also increase spurious transitions, which the acceptance gate G5 penalizes.
 
+#### 5.4.1 Optional HMM / Markov-switching overlay (`roro/regime_hmm.py`)
+
+The percentile classifier labels a regime by where today's slope sits in its own distribution; it carries no notion of regime *persistence*, so the raw daily tercile flickers. As an **optional, off-by-default** alternative (`hmm_enabled`, default `False`), the engine can fit a **3-state Markov-switching model** to each segment's cap-weighted slope series — regime-dependent **mean and variance** (`statsmodels` `MarkovRegression`, `switching_variance=True`) — mapping the three states, ordered by fitted mean, to **Risk-off / Transitional / Risk-on**. A learned transition matrix gives persistence intrinsically (no post-hoc smoothing), plus soft **filtered state probabilities** per day.
+
+The overlay is **causal by construction**: parameters are re-estimated on an **expanding window** (monthly refit) and states are inferred by the **Hamilton filter** (filtered, never smoothed — no lookahead). This is verified two ways: a no-lookahead property test (a label at date *t* is unchanged when future data is appended), and a cadence-invariance bench showing **monthly ≈ daily refit (0.9966 label agreement)**, so the cheaper monthly cadence is a safe default.
+
+When enabled, both methods are scored through the same §9 acceptance gates and a comparison report is written. On the full 2008–2026 backtest the **percentile classifier remains the production default**: the HMM passed no gate outright and slightly regressed event recognition (G3 6/8 vs 7/8) but **halved the calm-quarter flicker (G5 9 vs 18 transitions)** — directionally validating the persistence thesis without clearing the strict bars. It therefore ships as an overlay, not a replacement. EM mean-sorted state ordering is re-canonicalized at every refit to defeat EM label-switching; degenerate/non-converged fits fall back to the previous good parameters.
+
 ### 5.5 Correlation-structure signal (`roro/correlation.py`)
 
 On the same 3-month window, per segment:
@@ -202,9 +210,10 @@ This is distinct from the segment-level cross-sectional slope of §5.2 — it is
         │
         ▼
    ┌──────────────────────── roro.engine.run ────────────────────────┐
-   │ returns → segments → regression → classify → correlation         │
-   │         → validation → tripwire → alerts                         │
+   │ returns → segments → regression → classify [→ classify_hmm*]      │
+   │         → correlation → validation → tripwire → alerts            │
    └──────────────────────────────────────────────────────────────────┘
+            * optional HMM overlay, only when hmm_enabled (§5.4.1)
         │
         ▼
    roro.io.write_run   →  outputs/<run-date>/*.csv  +  snapshot.json
@@ -220,17 +229,22 @@ This is distinct from the segment-level cross-sectional slope of §5.2 — it is
 - **Thin CLI over a library.** `roro/cli.py` (Click) exposes `run`, `backtest`, and `report`; everything is importable as a library.
 - **Atomic writes.** Run output is written to a `<date>.tmp` directory and renamed on success, so a partial run never corrupts an existing one.
 
-**Engine module map:** `config` (frozen `EngineConfig` + YAML loader), `types` (12 frozen dataclasses), `io` (Excel/FRED ingest + run writer), `validators`, `fred_client` (Protocol + live + mock), `returns`, `segments`, `regression`, `classify`, `correlation`, `validation`, `tripwire`, `alerts`, `engine` (orchestrator), `backtest` (acceptance gates), `cli`.
+**Engine module map:** `config` (frozen `EngineConfig` + YAML loader), `types` (frozen dataclasses), `io` (Excel/FRED ingest + run writer), `validators`, `fred_client` (Protocol + live + mock), `returns`, `segments`, `regression`, `classify`, `regime_hmm` (optional HMM overlay, §5.4.1), `correlation`, `validation`, `tripwire`, `alerts`, `engine` (orchestrator), `backtest` (acceptance gates + dual-method comparison), `cli`. The report layer adds `roro/report/vol_breadth.py` (realized-vol percentile matrix) alongside `load → figures → html → orchestrate`.
 
 ---
 
 ## 7. The interactive report
 
-`roro report` consumes a run directory plus the source `data.xlsx` and emits a single self-contained interactive HTML file (Plotly, loaded from CDN). Three figures:
+`roro report` consumes a run directory plus the source `data.xlsx` and emits a single self-contained interactive HTML file (Plotly, loaded from CDN). It renders **five figures for a standard run, six when the run was produced with the HMM overlay enabled**:
 
 1. **Risk-return scatter** — x = EWMA annualized volatility, y = 3-month total log return. One marker per country-asset, colored **blue (DM) / green (EM)**, with a **dashed OLS trend line and a 95% confidence ribbon per group**. A **date slider** (trailing 252 business days) animates the snapshot through time; a **segment dropdown** (Full / DM / EM / DM_Eq / EM_Eq / DM_FI / EM_FI) filters the points and **retightens both axes to the selected cluster**.
 2. **Beta-return scatter** — identical, with x = per-series 63-day beta vs the cap-weighted global proxy (§5.7).
-3. **Segment β time-series** — the cap-weighted slope for a selected segment over the **full available history**, with the background shaded by tercile regime band (Risk-off red / Transitional grey / Risk-on green). A segment dropdown switches the line and its shading.
+3. **Segment β time-series** — the cap-weighted slope for a selected segment over the **full available history**, with the background shaded by tercile regime band (Risk-off red / Transitional grey / Risk-on green). A segment dropdown switches the line and its shading. When the run carries HMM output, a **"Regime bands: Percentile ↔ HMM" toggle** above this chart swaps the band source on the same β line — directly contrasting the hysteresis-smoothed percentile bands with the intrinsically-persistent HMM bands.
+4. **HMM regime probabilities** *(only when `hmm_enabled`)* — a per-segment **stacked area of the three filtered state probabilities** (Risk-off / Transitional / Risk-on, summing to 1.0) over full history. A thin dominant band signals low model confidence; the warmup region is left blank. The soft view the percentile hard labels cannot express.
+5. **Volatility breadth (sorted-rank)** — a heatmap answering *how many* assets trade at elevated volatility versus their own history. Each day, the cross-section of per-series **63-day realized-vol percentiles** (ranked against each series' expanding ≥5-year history) is **sorted descending**; the thickness of the bright band at the top is the count of stressed assets. Plasma colorscale; an **All / Eq / FI class toggle**.
+6. **Volatility percentile by asset** — the same data as a per-series identity heatmap (one fixed row per series, ordered by mean percentile), showing *which* assets are stressed and letting you track one over time. Same Plasma scale and class toggle.
+
+Figures 5–6 use **simple realized volatility** (rolling 63-day stdev × √252), ranked per series against its **expanding, minimum-5-year** history — distinct from the engine's EWMA vol used for the slope regression. Both heatmaps are always present (they need only the xlsx); the warmup region (before each series has 5 years of history) is trimmed from the x-axis.
 
 ### Sample output
 
@@ -326,6 +340,8 @@ roro run --config configs/default.yaml --date 2026-05-27 --as-of-data-date 2026-
 
 Produces `outputs/2026-05-27/` (see §11).
 
+> **Enabling the HMM overlay (§5.4.1):** set `hmm_enabled: true` in the config YAML (defaults: `hmm_refit_interval_days: 21`, `hmm_min_history_days: 252`, `hmm_switching_variance: true`). The run then also emits `regimes_hmm.csv` + `hmm_refit_log.csv`, and `roro report` adds the HMM probability figure and the percentile↔HMM band toggle. Left off, the engine and report behave exactly as v1.0.
+
 ### Build the report
 
 ```bash
@@ -361,9 +377,13 @@ A run directory (`outputs/<run-date>/`) contains:
 | `correlation.csv` | Per segment: average pairwise correlation, PC1 variance share. |
 | `external_validation.csv` | Rolling-60d ρ of each segment slope vs each FRED proxy. |
 | `tripwire.csv` | The 1-month fast-signal mirror of the slope. |
-| `alerts.csv` | Bucket transitions, disagreement events, validation-degradation events. |
-| `snapshot.json` | Resolved config, data fingerprint (SHA-256 + mtime), FRED hashes, code version, warnings. |
-| `report.html` | (from `roro report`) the interactive three-figure dashboard. |
+| `alerts.csv` | Bucket transitions, disagreement events, validation-degradation events (HMM-label transitions too when the overlay is on). |
+| `regimes_hmm.csv` | *(only when `hmm_enabled`)* Per (date, segment): HMM state, label, the three filtered probabilities, confidence, cold-start and thin-cut flags. |
+| `hmm_refit_log.csv` | *(only when `hmm_enabled`)* The dates on which HMM parameters were re-estimated, per segment (refit-cadence provenance). |
+| `snapshot.json` | Resolved config, data fingerprint (SHA-256 + mtime), FRED hashes, code version, warnings; a `regime_hmm` block when the overlay is on. |
+| `report.html` | (from `roro report`) the interactive dashboard — five figures, six with HMM. |
+
+When `roro backtest` runs with the HMM overlay enabled, it additionally writes `acceptance_report_hmm.json` and `acceptance_compare.json` (the gate-by-gate percentile-vs-HMM comparison) alongside `acceptance_report.json`.
 
 ---
 
@@ -378,11 +398,17 @@ Known v1.0 simplifications:
 - **Simplified correlation pillar.** A static PC1/avg-pairwise proxy stands in for the full Beber et al. Regime-Switching Dynamic Correlation model.
 - **Composite price wiring for internal consistency is partial** in the engine v1.
 
+**Shipped since v1.0 (v1.1):**
+
+- **HMM / Markov-switching regime overlay** (`roro/regime_hmm.py`, §5.4.1) — optional, off by default; causal (filtered + point-in-time monthly refit); compared to the percentile classifier through the acceptance gates. Percentile remains the production default per the 2008–2026 backtest.
+- **Expanded report** — HMM filtered-probability area, the percentile↔HMM band toggle, and the two volatility-breadth heatmaps (§7); `assemble` refactored to explicit per-figure specs.
+
 Roadmap:
 
-- **v1.1** — GFP (Miranda-Agrippino & Rey global financial cycle factor) as a sixth external validator; rolling/time-varying cap weights.
-- **v2.0** — predictive layer based on Beber-style transition *persistence* (not realized-return forecasts), only after the diagnostic validates against the external proxies and internal aggregates.
-- **Engineering** — split the visualization `figures.py` into `_scatter.py` / `_beta_ts.py`; address interactive-report payload size for long windows.
+- **v1.1 (remaining)** — GFP (Miranda-Agrippino & Rey global financial cycle factor) as a sixth external validator; rolling/time-varying cap weights; wire the external/internal validation through the HMM labels so gates G1/G2/G6 discriminate the two methods (currently method-shared).
+- **HMM tuning** — recover G3 event recognition (e.g. tune transition-matrix persistence or add a confirmation overlay) so the persistence win on G5 doesn't cost sharp-event detection; revisit the strict gate thresholds, which the percentile baseline also fails on the full 2008–2026 window.
+- **v2.0** — predictive layer based on Beber-style transition *persistence* (the HMM transition matrix is a natural substrate), only after the diagnostic validates against the external proxies and internal aggregates.
+- **Engineering** — split the visualization `figures.py` into focused submodules; address interactive-report payload size for long windows (the heatmaps add ~25 MB on the full-history run).
 
 ---
 
