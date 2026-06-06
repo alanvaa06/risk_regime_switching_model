@@ -72,3 +72,16 @@ def test_build_report_missing_run_dir_csv_raises(
 
     with pytest.raises(ReportInputError, match="beta_series.csv"):
         build_report(minimal_run_dir, tiny_xlsx, out, window=21)
+
+
+def test_build_report_includes_vol_heatmaps(
+    minimal_run_dir: Path, tiny_xlsx: Path, tmp_path: Path
+) -> None:
+    from roro.report import build_report  # noqa: PLC0415
+
+    out = build_report(minimal_run_dir, tiny_xlsx, tmp_path / "r.html", window=21)
+    html = out.read_text(encoding="utf-8")
+    assert "fig_vol_breadth" in html
+    assert "fig_vol_assets" in html
+    assert "Volatility breadth (sorted percentile)" in html
+    assert "Volatility percentile by asset" in html

@@ -9,6 +9,8 @@ from roro.report.figures import (
     regime_probability_area,
     scatter_beta_return,
     scatter_vol_return,
+    vol_breadth_heatmap,
+    vol_pct_asset_heatmap,
 )
 from roro.report.html import FigureSpec, assemble
 from roro.report.load import DEFAULT_WINDOW, load_bundle
@@ -48,6 +50,14 @@ def build_report(
             regime_probability_area(bundle), "fig_hmm_probs", "HMM regime probabilities"
         ))
         lookup = beta_band_lookup(bundle)
+    specs.append(FigureSpec(
+        vol_breadth_heatmap(bundle), "fig_vol_breadth",
+        "Volatility breadth (sorted percentile)",
+    ))
+    specs.append(FigureSpec(
+        vol_pct_asset_heatmap(bundle), "fig_vol_assets",
+        "Volatility percentile by asset",
+    ))
     html = assemble(
         specs,
         run_date=bundle.run_date,
