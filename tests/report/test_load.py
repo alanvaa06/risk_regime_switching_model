@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -79,3 +80,14 @@ def test_load_bundle_hmm_none_when_absent(minimal_run_dir: Path, tiny_xlsx: Path
     assert bundle.seg_hmm_p_off is None
     assert bundle.seg_hmm_p_tr is None
     assert bundle.seg_hmm_p_on is None
+
+
+def test_load_bundle_vol_pct_full_history_with_warmup(
+    minimal_run_dir: Path, tiny_xlsx: Path
+) -> None:
+    bundle = load_bundle(minimal_run_dir, tiny_xlsx, window=21)
+    assert bundle.vol_pct is not None
+    assert len(bundle.vol_pct.index) > len(bundle.dates)
+    vals = bundle.vol_pct.to_numpy(dtype=float)
+    finite = vals[np.isfinite(vals)]
+    assert (finite >= 0).all() and (finite <= 1).all()
