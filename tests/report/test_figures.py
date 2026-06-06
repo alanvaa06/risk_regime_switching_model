@@ -675,3 +675,32 @@ def test_vol_pct_asset_heatmap_rows_ordered_by_mean_desc() -> None:
     menus = fig.layout.updatemenus
     assert [b.label for b in menus[0].buttons] == ["All", "Eq", "FI"]
     assert fig.data[0].zmin == 0.0 and fig.data[0].zmax == 1.0
+
+
+def test_vol_heatmaps_use_plasma_colorscale() -> None:
+    from roro.report.figures import VOL_COLORSCALE  # noqa: PLC0415
+
+    assert VOL_COLORSCALE == "Plasma"
+
+
+def test_vol_breadth_heatmap_trims_warmup() -> None:
+    idx = pd.bdate_range("2014-01-02", periods=6)
+    vp = pd.DataFrame(
+        {"A_Eq": [np.nan, np.nan, 0.9, 0.8, 0.7, 0.6],
+         "B_Eq": [np.nan, np.nan, 0.5, 0.4, 0.3, 0.2]},
+        index=idx,
+    )
+    meta = pd.DataFrame(
+        {"country": ["A", "B"], "asset": ["Eq", "Eq"], "segment": ["DM", "EM"],
+         "weight": [1.0, 1.0]},
+        index=["A_Eq", "B_Eq"],
+    )
+    empty = pd.DataFrame(index=idx)
+    bundle = DataBundle(
+        run_date=idx[-1], methodology_version="1.0.0", dates=pd.DatetimeIndex(idx),
+        vol=empty, ret_3m=empty, beta_vs_global=empty, meta=meta,
+        seg_beta=empty, seg_tercile=empty, vol_pct=vp,
+    )
+    fig = vol_breadth_heatmap(bundle)
+    # leading 2 all-NaN dates dropped → x starts at the first date with data
+    assert pd.Timestamp(fig.data[0].x[0]) == idx[2]

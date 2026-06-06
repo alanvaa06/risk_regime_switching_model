@@ -703,7 +703,7 @@ def beta_band_lookup(bundle: DataBundle) -> dict[str, dict[str, list[dict[str, o
     return out
 
 
-VOL_COLORSCALE: list[list[object]] = [[0.0, "#ffffff"], [0.5, "#f4a582"], [1.0, "#b2182b"]]
+VOL_COLORSCALE: str = "Plasma"
 
 
 def _class_subsets(bundle: DataBundle) -> dict[str, list[str]]:
@@ -713,6 +713,15 @@ def _class_subsets(bundle: DataBundle) -> dict[str, list[str]]:
     eq = [c for c in cols if bundle.meta.loc[c, "asset"] == ASSET_EQ]
     fi = [c for c in cols if bundle.meta.loc[c, "asset"] == ASSET_FI]
     return {"All": cols, "Eq": eq, "FI": fi}
+
+
+def _trim_warmup(vol_pct: pd.DataFrame) -> pd.DataFrame:
+    """Drop leading dates where every series is still NaN (the percentile warmup)."""
+    valid = vol_pct.notna().any(axis=1)
+    if not bool(valid.any()):
+        return vol_pct
+    first = valid.idxmax()
+    return vol_pct.loc[vol_pct.index >= first]
 
 
 def _breadth_z(vol_pct: pd.DataFrame, series_ids: list[str]) -> np.ndarray:  # type: ignore[type-arg]
@@ -731,8 +740,9 @@ def vol_breadth_heatmap(bundle: DataBundle) -> go.Figure:
     """Sorted-rank breadth heatmap of vol percentiles, with an All/Eq/FI class toggle."""
     assert bundle.vol_pct is not None
     subsets = _class_subsets(bundle)
-    x = bundle.vol_pct.index
-    z_by_class = {k: _breadth_z(bundle.vol_pct, ids) for k, ids in subsets.items()}
+    vp = _trim_warmup(bundle.vol_pct)
+    x = vp.index
+    z_by_class = {k: _breadth_z(vp, ids) for k, ids in subsets.items()}
     default = "All"
     z0 = z_by_class[default]
 
@@ -789,8 +799,9 @@ def vol_pct_asset_heatmap(bundle: DataBundle) -> go.Figure:
     """Per-asset vol-percentile heatmap (rows = series, mean-ordered) with class toggle."""
     assert bundle.vol_pct is not None
     subsets = _class_subsets(bundle)
-    x = bundle.vol_pct.index
-    zy_by_class = {k: _asset_z_y(bundle.vol_pct, ids) for k, ids in subsets.items()}
+    vp = _trim_warmup(bundle.vol_pct)
+    x = vp.index
+    zy_by_class = {k: _asset_z_y(vp, ids) for k, ids in subsets.items()}
     default = "All"
     z0, y0 = zy_by_class[default]
 
