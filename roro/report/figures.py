@@ -653,3 +653,99 @@ def beta_timeseries(bundle: DataBundle) -> go.Figure:
         ),
     )
     return fig
+
+
+_PROB_TRACE_ORDER: tuple[tuple[str, str], ...] = (
+    ("Risk-off", "seg_hmm_p_off"),
+    ("Transitional", "seg_hmm_p_tr"),
+    ("Risk-on", "seg_hmm_p_on"),
+)
+
+
+def regime_probability_area(bundle: DataBundle) -> go.Figure:
+    """Stacked filtered-probability area (3 probs → 1.0) per segment, HMM only.
+
+    Assumes bundle.seg_hmm_* are not None (caller guards on seg_hmm_label).
+    """
+    assert bundle.seg_hmm_label is not None  # caller guards
+    p_off = bundle.seg_hmm_p_off
+    p_tr = bundle.seg_hmm_p_tr
+    p_on = bundle.seg_hmm_p_on
+    assert p_off is not None and p_tr is not None and p_on is not None
+    panels: dict[str, pd.DataFrame] = {
+        "seg_hmm_p_off": p_off,
+        "seg_hmm_p_tr": p_tr,
+        "seg_hmm_p_on": p_on,
+    }
+
+    available = [s for s in BETA_TS_SEGMENTS if s in bundle.seg_hmm_label.columns]
+    default = "global" if "global" in available else available[0]
+    x = p_off.index
+
+    traces: list[go.Scatter] = []
+    for label, attr in _PROB_TRACE_ORDER:
+        traces.append(
+            go.Scatter(
+                x=x,
+                y=panels[attr][default].to_numpy(dtype=float),
+                mode="lines",
+                line={"width": 0.5, "color": REGIME_COLORS[label]},
+                fillcolor=REGIME_COLORS[label],
+                stackgroup="p",
+                name=label,
+                hovertemplate="%{x|%Y-%m-%d}<br>" + label + "=%{y:.2f}<extra></extra>",
+            )
+        )
+
+    buttons: list[dict[str, object]] = []
+    for seg in available:
+        buttons.append(
+            {
+                "method": "update",
+                "label": seg,
+                "args": [
+                    {
+                        "y": [
+                            panels[attr][seg].to_numpy(dtype=float)
+                            for _, attr in _PROB_TRACE_ORDER
+                        ]
+                    },
+                    {"title": f"HMM regime probabilities — {seg}"},
+                ],
+            }
+        )
+
+    return go.Figure(
+        data=traces,
+        layout=go.Layout(
+            title=f"HMM regime probabilities — {default}",
+            height=700,
+            template="simple_white",
+            font={"family": "system-ui, -apple-system, sans-serif", "size": 13},
+            margin={"l": 60, "r": 200, "t": 60, "b": 120},
+            xaxis={
+                "title": "Date",
+                "showgrid": True,
+                "gridcolor": "#e6e6e6",
+                "zeroline": False,
+            },
+            yaxis={
+                "title": "Filtered P(state)",
+                "range": [0.0, 1.0],
+                "showgrid": True,
+                "gridcolor": "#e6e6e6",
+                "zeroline": False,
+            },
+            updatemenus=[
+                {
+                    "type": "dropdown",
+                    "showactive": True,
+                    "buttons": buttons,
+                    "x": 1.12,
+                    "y": 1.0,
+                    "xanchor": "left",
+                    "yanchor": "top",
+                }
+            ],
+        ),
+    )
