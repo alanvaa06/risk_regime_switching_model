@@ -10,6 +10,7 @@ from roro.io import load_panel, load_prices
 from roro.report.beta_vs_global import compute_beta_vs_global
 from roro.report.bundle import DataBundle
 from roro.report.errors import ReportInputError
+from roro.report.vol_breadth import realized_vol, vol_percentile_matrix
 from roro.returns import daily_log_returns, ewma_vol, total_return_3m
 from roro.segments import ASSET_EQ, ASSET_FI
 
@@ -40,8 +41,8 @@ def _build_series_panels(
     xlsx_path: Path,
     *,
     window: int,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Compute per-series vol, ret_3m, beta_vs_global, meta from xlsx."""
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Compute per-series vol, ret_3m, beta_vs_global, meta, vol_pct from xlsx."""
     universe = load_panel(xlsx_path)
     prices = load_prices(xlsx_path)
 
@@ -89,6 +90,9 @@ def _build_series_panels(
     ret_3m = ret_3m[common]
     beta = compute_beta_vs_global(daily, weights.loc[common], window=BETA_WINDOW_DAYS)
 
+    vol_full = realized_vol(daily, window=63)
+    vol_pct = vol_percentile_matrix(vol_full, min_history_days=1260)
+
     # Slice to last `window` business days
     tail_dates = per_series_prices.index[-window:]
     return (
@@ -96,6 +100,7 @@ def _build_series_panels(
         ret_3m.loc[tail_dates],
         beta.loc[tail_dates],
         meta.loc[common],
+        vol_pct,
     )
 
 
@@ -133,7 +138,7 @@ def load_bundle(
     beta_series = _read_required_csv(run_dir, "beta_series.csv")
     regimes = _read_required_csv(run_dir, "regimes.csv")
 
-    vol, ret_3m, beta_vs_global, meta = _build_series_panels(xlsx_path, window=window)
+    vol, ret_3m, beta_vs_global, meta, vol_pct = _build_series_panels(xlsx_path, window=window)
     dates = vol.index
 
     seg_beta = _pivot_segment(beta_series, value_col="beta", scheme_filter="cap_wtd")
@@ -141,6 +146,17 @@ def load_bundle(
 
     # seg_beta / seg_tercile carry their full history from the run-dir CSVs.
     # Scatters use the 252d `dates`; the beta time-series uses seg_beta.index.
+
+    seg_hmm_label = seg_hmm_p_off = seg_hmm_p_tr = seg_hmm_p_on = None
+    hmm_path = run_dir / "regimes_hmm.csv"
+    if hmm_path.exists():
+        hmm = pd.read_csv(hmm_path, parse_dates=["date"])
+        seg_hmm_label = hmm.pivot(index="date", columns="segment", values="label").sort_index()
+        seg_hmm_p_off = hmm.pivot(index="date", columns="segment", values="p_risk_off").sort_index()
+        seg_hmm_p_tr = (
+            hmm.pivot(index="date", columns="segment", values="p_transitional").sort_index()
+        )
+        seg_hmm_p_on = hmm.pivot(index="date", columns="segment", values="p_risk_on").sort_index()
 
     return DataBundle(
         run_date=pd.Timestamp(str(snapshot["run_date"])),
@@ -152,4 +168,9 @@ def load_bundle(
         meta=meta,
         seg_beta=seg_beta,
         seg_tercile=seg_tercile,
+        seg_hmm_label=seg_hmm_label,
+        seg_hmm_p_off=seg_hmm_p_off,
+        seg_hmm_p_tr=seg_hmm_p_tr,
+        seg_hmm_p_on=seg_hmm_p_on,
+        vol_pct=vol_pct,
     )

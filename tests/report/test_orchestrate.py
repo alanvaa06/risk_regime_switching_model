@@ -5,6 +5,32 @@ from pathlib import Path
 
 import pytest
 
+from tests.report.conftest import write_hmm_csv
+
+
+def test_build_report_includes_hmm_when_present(
+    minimal_run_dir: Path, tiny_xlsx: Path, tmp_path: Path
+) -> None:
+    from roro.report import build_report  # noqa: PLC0415
+
+    write_hmm_csv(minimal_run_dir)
+    out = build_report(minimal_run_dir, tiny_xlsx, tmp_path / "r.html", window=21)
+    html = out.read_text(encoding="utf-8")
+    assert "HMM regime probabilities" in html
+    assert 'id="hmm-band-method"' in html
+    assert "fig_hmm_probs" in html
+
+
+def test_build_report_no_hmm_unchanged(
+    minimal_run_dir: Path, tiny_xlsx: Path, tmp_path: Path
+) -> None:
+    from roro.report import build_report  # noqa: PLC0415
+
+    out = build_report(minimal_run_dir, tiny_xlsx, tmp_path / "r.html", window=21)
+    html = out.read_text(encoding="utf-8")
+    assert "hmm-band-method" not in html
+    assert "fig_hmm_probs" not in html
+
 
 def test_build_report_writes_html(
     tmp_path: Path, minimal_run_dir: Path, tiny_xlsx: Path
@@ -46,3 +72,16 @@ def test_build_report_missing_run_dir_csv_raises(
 
     with pytest.raises(ReportInputError, match="beta_series.csv"):
         build_report(minimal_run_dir, tiny_xlsx, out, window=21)
+
+
+def test_build_report_includes_vol_heatmaps(
+    minimal_run_dir: Path, tiny_xlsx: Path, tmp_path: Path
+) -> None:
+    from roro.report import build_report  # noqa: PLC0415
+
+    out = build_report(minimal_run_dir, tiny_xlsx, tmp_path / "r.html", window=21)
+    html = out.read_text(encoding="utf-8")
+    assert "fig_vol_breadth" in html
+    assert "fig_vol_assets" in html
+    assert "Volatility breadth (sorted percentile)" in html
+    assert "Volatility percentile by asset" in html

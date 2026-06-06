@@ -26,3 +26,8 @@ class DataBundle:
     meta: pd.DataFrame
     seg_beta: pd.DataFrame
     seg_tercile: pd.DataFrame
+    seg_hmm_label: pd.DataFrame | None = None
+    seg_hmm_p_off: pd.DataFrame | None = None
+    seg_hmm_p_tr: pd.DataFrame | None = None
+    seg_hmm_p_on: pd.DataFrame | None = None
+    vol_pct: pd.DataFrame | None = None

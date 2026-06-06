@@ -4,11 +4,15 @@ from __future__ import annotations
 from pathlib import Path
 
 from roro.report.figures import (
+    beta_band_lookup,
     beta_timeseries,
+    regime_probability_area,
     scatter_beta_return,
     scatter_vol_return,
+    vol_breadth_heatmap,
+    vol_pct_asset_heatmap,
 )
-from roro.report.html import assemble
+from roro.report.html import FigureSpec, assemble
 from roro.report.load import DEFAULT_WINDOW, load_bundle
 
 
@@ -35,15 +39,31 @@ def build_report(
         FileNotFoundError: xlsx_path does not exist.
     """
     bundle = load_bundle(run_dir, xlsx_path, window=window)
-    figures = [
-        scatter_vol_return(bundle),
-        scatter_beta_return(bundle),
-        beta_timeseries(bundle),
+    specs = [
+        FigureSpec(scatter_vol_return(bundle), "fig_scatter_vol", "Risk vs Return"),
+        FigureSpec(scatter_beta_return(bundle), "fig_scatter_beta", "Beta vs Return"),
+        FigureSpec(beta_timeseries(bundle), "fig_beta_ts", "Segment β with regime bands"),
     ]
+    lookup = None
+    if bundle.seg_hmm_label is not None:
+        specs.append(FigureSpec(
+            regime_probability_area(bundle), "fig_hmm_probs", "HMM regime probabilities"
+        ))
+        lookup = beta_band_lookup(bundle)
+    specs.append(FigureSpec(
+        vol_breadth_heatmap(bundle), "fig_vol_breadth",
+        "Volatility breadth (sorted percentile)",
+    ))
+    specs.append(FigureSpec(
+        vol_pct_asset_heatmap(bundle), "fig_vol_assets",
+        "Volatility percentile by asset",
+    ))
     html = assemble(
-        figures,
+        specs,
         run_date=bundle.run_date,
         methodology_version=bundle.methodology_version,
+        beta_div_id="fig_beta_ts",
+        beta_band_lookup=lookup,
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(html, encoding="utf-8")

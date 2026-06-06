@@ -43,9 +43,11 @@ def test_build_report_from_golden_2024q1(tmp_path: Path, tiny_xlsx: Path) -> Non
 
     html_text = out.read_text(encoding="utf-8")
     assert html_text.startswith("<!DOCTYPE html>")
-    # 3 figures rendered
-    assert html_text.count('class="plotly-graph-div"') == 3
+    # 5 figures rendered (no HMM in this golden run): 3 base + 2 vol heatmaps
+    assert html_text.count('class="plotly-graph-div"') == 5
     # Section titles present
     assert "Risk vs Return" in html_text
     assert "Beta vs Return" in html_text
     assert "regime bands" in html_text
+    assert "Volatility breadth (sorted percentile)" in html_text
+    assert "Volatility percentile by asset" in html_text

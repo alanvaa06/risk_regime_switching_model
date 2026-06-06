@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import plotly.graph_objects as go
 import pytest
 
@@ -13,9 +14,13 @@ from roro.report.figures import (
     BETA_TS_SEGMENTS,
     _ci_band_traces,
     _ols_with_ci,
+    beta_band_lookup,
     beta_timeseries,
+    regime_probability_area,
     scatter_beta_return,
     scatter_vol_return,
+    vol_breadth_heatmap,
+    vol_pct_asset_heatmap,
 )
 from roro.report.load import load_bundle
 
@@ -544,6 +549,33 @@ def test_regime_colors_opacity_raised() -> None:
     assert "0.32" in REGIME_COLORS["Transitional"]
 
 
+def _bundle_with_hmm() -> DataBundle:
+    idx = pd.bdate_range("2020-01-02", periods=10)
+    label = pd.DataFrame({"global": ["Risk-on"] * 10, "DM": ["Risk-off"] * 10}, index=idx)
+    p_off = pd.DataFrame({"global": [0.1] * 10, "DM": [0.7] * 10}, index=idx)
+    p_tr = pd.DataFrame({"global": [0.2] * 10, "DM": [0.2] * 10}, index=idx)
+    p_on = pd.DataFrame({"global": [0.7] * 10, "DM": [0.1] * 10}, index=idx)
+    empty = pd.DataFrame(index=idx)
+    return DataBundle(
+        run_date=idx[-1], methodology_version="1.0.0", dates=pd.DatetimeIndex(idx),
+        vol=empty, ret_3m=empty, beta_vs_global=empty, meta=pd.DataFrame(),
+        seg_beta=empty, seg_tercile=empty,
+        seg_hmm_label=label, seg_hmm_p_off=p_off, seg_hmm_p_tr=p_tr, seg_hmm_p_on=p_on,
+    )
+
+
+def test_regime_probability_area_three_stacked_traces() -> None:
+    fig = regime_probability_area(_bundle_with_hmm())
+    assert len(fig.data) == 3
+    assert all(getattr(tr, "stackgroup", None) for tr in fig.data)
+    ysum = sum(float(tr.y[0]) for tr in fig.data)
+    assert abs(ysum - 1.0) < 1e-9
+    menus = fig.layout.updatemenus
+    assert len(menus) == 1
+    assert len(menus[0].buttons) == 2
+    assert fig.layout.yaxis.range == (0.0, 1.0) or list(fig.layout.yaxis.range) == [0.0, 1.0]
+
+
 def test_beta_timeseries_smoothing_reduces_rect_count() -> None:
     """Hysteresis smoothing collapses sliver runs into broad blocks.
 
@@ -585,3 +617,113 @@ def test_beta_timeseries_smoothing_reduces_rect_count() -> None:
     rect_count = len([s for s in (fig.layout.shapes or []) if s.type == "rect"])
     raw_run_count = len(_regime_runs(tercile))
     assert rect_count < raw_run_count
+
+
+def test_beta_band_lookup_has_both_methods_per_segment() -> None:
+    bundle = _bundle_with_hmm()
+    idx = bundle.seg_hmm_label.index
+    object.__setattr__(
+        bundle, "seg_tercile",
+        pd.DataFrame({"global": ["Risk-on"] * len(idx), "DM": ["Risk-off"] * len(idx)}, index=idx),
+    )
+    object.__setattr__(
+        bundle, "seg_beta",
+        pd.DataFrame({"global": [1.0] * len(idx), "DM": [1.0] * len(idx)}, index=idx),
+    )
+    lookup = beta_band_lookup(bundle)
+    assert set(lookup["global"].keys()) == {"percentile", "hmm"}
+    shp = lookup["global"]["hmm"][0]
+    assert isinstance(shp["x0"], str)
+    assert shp["type"] == "rect"
+
+
+def _bundle_with_vol_pct() -> DataBundle:
+    idx = pd.bdate_range("2014-01-02", periods=8)
+    vp = pd.DataFrame(
+        {"A_Eq": [0.9] * 8, "B_Eq": [0.5] * 8, "C_FI": [0.1] * 8}, index=idx
+    )
+    meta = pd.DataFrame(
+        {"country": ["A", "B", "C"], "asset": ["Eq", "Eq", "FI"],
+         "segment": ["DM", "EM", "DM"], "weight": [1.0, 1.0, 1.0]},
+        index=["A_Eq", "B_Eq", "C_FI"],
+    )
+    empty = pd.DataFrame(index=idx)
+    return DataBundle(
+        run_date=idx[-1], methodology_version="1.0.0", dates=pd.DatetimeIndex(idx),
+        vol=empty, ret_3m=empty, beta_vs_global=empty, meta=meta,
+        seg_beta=empty, seg_tercile=empty, vol_pct=vp,
+    )
+
+
+def test_vol_breadth_heatmap_columns_sorted_descending() -> None:
+    fig = vol_breadth_heatmap(_bundle_with_vol_pct())
+    assert len(fig.data) == 1
+    z = np.asarray(fig.data[0].z, dtype=float)
+    col0 = z[:, 0]
+    assert col0[0] >= col0[1] >= col0[2]
+    assert abs(col0[0] - 0.9) < 1e-9 and abs(col0[2] - 0.1) < 1e-9
+    menus = fig.layout.updatemenus
+    assert len(menus) == 1
+    assert [b.label for b in menus[0].buttons] == ["All", "Eq", "FI"]
+    assert fig.data[0].zmin == 0.0 and fig.data[0].zmax == 1.0
+
+
+def test_vol_pct_asset_heatmap_rows_ordered_by_mean_desc() -> None:
+    fig = vol_pct_asset_heatmap(_bundle_with_vol_pct())
+    assert len(fig.data) == 1
+    assert list(fig.data[0].y) == ["A_Eq", "B_Eq", "C_FI"]
+    menus = fig.layout.updatemenus
+    assert [b.label for b in menus[0].buttons] == ["All", "Eq", "FI"]
+    assert fig.data[0].zmin == 0.0 and fig.data[0].zmax == 1.0
+
+
+def test_vol_heatmaps_use_plasma_colorscale() -> None:
+    from roro.report.figures import VOL_COLORSCALE  # noqa: PLC0415
+
+    assert VOL_COLORSCALE == "Plasma"
+
+
+def test_vol_breadth_heatmap_pads_empty_ranks_with_zero() -> None:
+    idx = pd.bdate_range("2014-01-02", periods=3)
+    # day index 1: B_Eq is NaN → only 1 valid series that column
+    vp = pd.DataFrame(
+        {"A_Eq": [0.9, 0.9, 0.9], "B_Eq": [0.4, np.nan, 0.4]}, index=idx
+    )
+    meta = pd.DataFrame(
+        {"country": ["A", "B"], "asset": ["Eq", "Eq"], "segment": ["DM", "EM"],
+         "weight": [1.0, 1.0]},
+        index=["A_Eq", "B_Eq"],
+    )
+    empty = pd.DataFrame(index=idx)
+    bundle = DataBundle(
+        run_date=idx[-1], methodology_version="1.0.0", dates=pd.DatetimeIndex(idx),
+        vol=empty, ret_3m=empty, beta_vs_global=empty, meta=meta,
+        seg_beta=empty, seg_tercile=empty, vol_pct=vp,
+    )
+    z = np.asarray(vol_breadth_heatmap(bundle).data[0].z, dtype=float)
+    assert z[0, 1] == 0.9          # only valid value at top
+    assert z[1, 1] == 0.0          # empty rank slot → 0, not NaN
+    assert not np.isnan(z).any()   # no blank cells anywhere
+
+
+def test_vol_breadth_heatmap_trims_warmup() -> None:
+    idx = pd.bdate_range("2014-01-02", periods=6)
+    vp = pd.DataFrame(
+        {"A_Eq": [np.nan, np.nan, 0.9, 0.8, 0.7, 0.6],
+         "B_Eq": [np.nan, np.nan, 0.5, 0.4, 0.3, 0.2]},
+        index=idx,
+    )
+    meta = pd.DataFrame(
+        {"country": ["A", "B"], "asset": ["Eq", "Eq"], "segment": ["DM", "EM"],
+         "weight": [1.0, 1.0]},
+        index=["A_Eq", "B_Eq"],
+    )
+    empty = pd.DataFrame(index=idx)
+    bundle = DataBundle(
+        run_date=idx[-1], methodology_version="1.0.0", dates=pd.DatetimeIndex(idx),
+        vol=empty, ret_3m=empty, beta_vs_global=empty, meta=meta,
+        seg_beta=empty, seg_tercile=empty, vol_pct=vp,
+    )
+    fig = vol_breadth_heatmap(bundle)
+    # leading 2 all-NaN dates dropped → x starts at the first date with data
+    assert pd.Timestamp(fig.data[0].x[0]) == idx[2]

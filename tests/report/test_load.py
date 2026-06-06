@@ -3,11 +3,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from roro.report.errors import ReportInputError
 from roro.report.load import load_bundle
+from tests.report.conftest import write_hmm_csv
 
 
 def test_load_bundle_happy_path(minimal_run_dir: Path, tiny_xlsx: Path) -> None:
@@ -60,3 +62,32 @@ def test_load_bundle_seg_beta_carries_full_history(
     assert len(bundle.seg_tercile.index) > len(bundle.dates)
     assert bundle.seg_beta["global"].notna().any()
     assert bundle.seg_tercile["global"].notna().any()
+
+
+def test_load_bundle_reads_hmm_when_present(minimal_run_dir: Path, tiny_xlsx: Path) -> None:
+    write_hmm_csv(minimal_run_dir)
+    bundle = load_bundle(minimal_run_dir, tiny_xlsx, window=21)
+    assert bundle.seg_hmm_label is not None
+    assert bundle.seg_hmm_p_off is not None
+    assert "global" in bundle.seg_hmm_label.columns
+    assert bundle.seg_hmm_p_off.shape == bundle.seg_hmm_label.shape
+    assert bundle.seg_hmm_p_tr is not None and bundle.seg_hmm_p_on is not None
+
+
+def test_load_bundle_hmm_none_when_absent(minimal_run_dir: Path, tiny_xlsx: Path) -> None:
+    bundle = load_bundle(minimal_run_dir, tiny_xlsx, window=21)
+    assert bundle.seg_hmm_label is None
+    assert bundle.seg_hmm_p_off is None
+    assert bundle.seg_hmm_p_tr is None
+    assert bundle.seg_hmm_p_on is None
+
+
+def test_load_bundle_vol_pct_full_history_with_warmup(
+    minimal_run_dir: Path, tiny_xlsx: Path
+) -> None:
+    bundle = load_bundle(minimal_run_dir, tiny_xlsx, window=21)
+    assert bundle.vol_pct is not None
+    assert len(bundle.vol_pct.index) > len(bundle.dates)
+    vals = bundle.vol_pct.to_numpy(dtype=float)
+    finite = vals[np.isfinite(vals)]
+    assert (finite >= 0).all() and (finite <= 1).all()

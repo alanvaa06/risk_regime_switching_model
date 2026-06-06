@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 from scipy.stats import linregress
 
 from roro.report.bundle import DataBundle
+from roro.segments import ASSET_EQ, ASSET_FI
 
 SegmentFilter = Literal["Full", "DM", "EM", "DM_Eq", "EM_Eq", "DM_FI", "EM_FI"]
 
@@ -653,3 +654,295 @@ def beta_timeseries(bundle: DataBundle) -> go.Figure:
         ),
     )
     return fig
+
+
+def _band_shapes(labels: pd.Series, *, smooth: bool) -> list[dict[str, object]]:
+    """Regime-run rectangles as JSON-serializable shape dicts (x0/x1 = ISO date strings)."""
+    series = _smooth_regime_hysteresis(labels, _REGIME_CONFIRM_DAYS) if smooth else labels
+    shapes: list[dict[str, object]] = []
+    for start, end, label in _regime_runs(series):
+        color = REGIME_COLORS.get(label)
+        if color is None:
+            continue
+        shapes.append(
+            {
+                "type": "rect",
+                "xref": "x",
+                "yref": "paper",
+                "x0": str(pd.Timestamp(start).date()),
+                "x1": str(pd.Timestamp(end).date()),
+                "y0": 0,
+                "y1": 1,
+                "fillcolor": color,
+                "line": {"width": 0},
+                "layer": "below",
+            }
+        )
+    return shapes
+
+
+def beta_band_lookup(bundle: DataBundle) -> dict[str, dict[str, list[dict[str, object]]]]:
+    """Per-segment precomputed band shapes for both methods, keyed for the JS toggle.
+
+    Percentile = hysteresis-smoothed tercile runs (matches beta_timeseries).
+    HMM = raw label runs (no smoothing — HMM is persistent by construction).
+    Only segments present in seg_beta are included.
+    """
+    assert bundle.seg_hmm_label is not None  # caller guards
+    out: dict[str, dict[str, list[dict[str, object]]]] = {}
+    for seg in BETA_TS_SEGMENTS:
+        if seg not in bundle.seg_beta.columns:
+            continue
+        percentile: list[dict[str, object]] = []
+        if seg in bundle.seg_tercile.columns:
+            percentile = _band_shapes(bundle.seg_tercile[seg], smooth=True)
+        hmm: list[dict[str, object]] = []
+        if seg in bundle.seg_hmm_label.columns:
+            hmm = _band_shapes(bundle.seg_hmm_label[seg], smooth=False)
+        out[seg] = {"percentile": percentile, "hmm": hmm}
+    return out
+
+
+VOL_COLORSCALE: str = "Plasma"
+
+
+def _class_subsets(bundle: DataBundle) -> dict[str, list[str]]:
+    """series_id lists for All / Eq / FI, restricted to vol_pct columns present in meta."""
+    assert bundle.vol_pct is not None
+    cols = [c for c in bundle.vol_pct.columns if c in bundle.meta.index]
+    eq = [c for c in cols if bundle.meta.loc[c, "asset"] == ASSET_EQ]
+    fi = [c for c in cols if bundle.meta.loc[c, "asset"] == ASSET_FI]
+    return {"All": cols, "Eq": eq, "FI": fi}
+
+
+def _trim_warmup(vol_pct: pd.DataFrame) -> pd.DataFrame:
+    """Drop leading dates where every series is still NaN (the percentile warmup)."""
+    valid = vol_pct.notna().any(axis=1)
+    if not bool(valid.any()):
+        return vol_pct
+    first = valid.idxmax()
+    return vol_pct.loc[vol_pct.index >= first]
+
+
+def _breadth_z(vol_pct: pd.DataFrame, series_ids: list[str]) -> np.ndarray:  # type: ignore[type-arg]
+    """(rank, date) matrix: each date column = that day's percentiles sorted descending.
+
+    Empty rank slots (ragged columns, where fewer than all series have a percentile
+    that day) are filled with 0.0 rather than NaN so they render dark, not blank.
+    """
+    arr = vol_pct[series_ids].to_numpy(dtype=float)  # (T, M)
+    n_dates, n_series = arr.shape
+    z = np.zeros((n_series, n_dates))
+    for j in range(n_dates):
+        valid = arr[j][~np.isnan(arr[j])]
+        valid_desc = np.sort(valid)[::-1]
+        z[: valid_desc.shape[0], j] = valid_desc
+    return z
+
+
+def vol_breadth_heatmap(bundle: DataBundle) -> go.Figure:
+    """Sorted-rank breadth heatmap of vol percentiles, with an All/Eq/FI class toggle."""
+    assert bundle.vol_pct is not None
+    subsets = _class_subsets(bundle)
+    vp = _trim_warmup(bundle.vol_pct)
+    x = vp.index
+    z_by_class = {k: _breadth_z(vp, ids) for k, ids in subsets.items()}
+    default = "All"
+    z0 = z_by_class[default]
+
+    trace = go.Heatmap(
+        z=z0,
+        x=x,
+        y=list(range(1, z0.shape[0] + 1)),
+        zmin=0.0,
+        zmax=1.0,
+        colorscale=VOL_COLORSCALE,
+        colorbar={"title": "vol pctile"},
+        hovertemplate="%{x|%Y-%m-%d}<br>rank %{y}<br>pctile=%{z:.2f}<extra></extra>",
+    )
+
+    buttons = [
+        {
+            "method": "update",
+            "label": k,
+            "args": [
+                {"z": [z_by_class[k]], "y": [list(range(1, z_by_class[k].shape[0] + 1))]},
+                {"title": f"Volatility breadth (sorted percentile) — {k}"},
+            ],
+        }
+        for k in ("All", "Eq", "FI")
+    ]
+
+    return go.Figure(
+        data=[trace],
+        layout=go.Layout(
+            title=f"Volatility breadth (sorted percentile) — {default}",
+            height=700,
+            template="simple_white",
+            font={"family": "system-ui, -apple-system, sans-serif", "size": 13},
+            margin={"l": 60, "r": 200, "t": 60, "b": 120},
+            xaxis={"title": "Date"},
+            yaxis={"title": "Asset rank (1 = highest vol pctile)", "autorange": "reversed"},
+            updatemenus=[
+                {"type": "dropdown", "showactive": True, "buttons": buttons,
+                 "x": 1.12, "y": 1.0, "xanchor": "left", "yanchor": "top"}
+            ],
+        ),
+    )
+
+
+def _asset_z_y(vol_pct: pd.DataFrame, series_ids: list[str]) -> tuple[np.ndarray, list[str]]:  # type: ignore[type-arg]
+    """(series, date) matrix + row labels, rows ordered by mean percentile descending."""
+    sub = vol_pct[series_ids]
+    order = list(sub.mean().sort_values(ascending=False).index)
+    z = sub[order].to_numpy(dtype=float).T  # (series, date)
+    return z, order
+
+
+def vol_pct_asset_heatmap(bundle: DataBundle) -> go.Figure:
+    """Per-asset vol-percentile heatmap (rows = series, mean-ordered) with class toggle."""
+    assert bundle.vol_pct is not None
+    subsets = _class_subsets(bundle)
+    vp = _trim_warmup(bundle.vol_pct)
+    x = vp.index
+    zy_by_class = {k: _asset_z_y(vp, ids) for k, ids in subsets.items()}
+    default = "All"
+    z0, y0 = zy_by_class[default]
+
+    trace = go.Heatmap(
+        z=z0,
+        x=x,
+        y=y0,
+        zmin=0.0,
+        zmax=1.0,
+        colorscale=VOL_COLORSCALE,
+        colorbar={"title": "vol pctile"},
+        hovertemplate="%{x|%Y-%m-%d}<br>%{y}<br>pctile=%{z:.2f}<extra></extra>",
+    )
+
+    buttons = []
+    for k in ("All", "Eq", "FI"):
+        zk, yk = zy_by_class[k]
+        buttons.append(
+            {
+                "method": "update",
+                "label": k,
+                "args": [
+                    {"z": [zk], "y": [yk]},
+                    {"title": f"Volatility percentile by asset — {k}"},
+                ],
+            }
+        )
+
+    return go.Figure(
+        data=[trace],
+        layout=go.Layout(
+            title=f"Volatility percentile by asset — {default}",
+            height=700,
+            template="simple_white",
+            font={"family": "system-ui, -apple-system, sans-serif", "size": 13},
+            margin={"l": 120, "r": 200, "t": 60, "b": 120},
+            xaxis={"title": "Date"},
+            yaxis={"title": "Asset", "autorange": "reversed"},
+            updatemenus=[
+                {"type": "dropdown", "showactive": True, "buttons": buttons,
+                 "x": 1.12, "y": 1.0, "xanchor": "left", "yanchor": "top"}
+            ],
+        ),
+    )
+
+
+_PROB_TRACE_ORDER: tuple[tuple[str, str], ...] = (
+    ("Risk-off", "seg_hmm_p_off"),
+    ("Transitional", "seg_hmm_p_tr"),
+    ("Risk-on", "seg_hmm_p_on"),
+)
+
+
+def regime_probability_area(bundle: DataBundle) -> go.Figure:
+    """Stacked filtered-probability area (3 probs → 1.0) per segment, HMM only.
+
+    Assumes bundle.seg_hmm_* are not None (caller guards on seg_hmm_label).
+    """
+    assert bundle.seg_hmm_label is not None  # caller guards
+    p_off = bundle.seg_hmm_p_off
+    p_tr = bundle.seg_hmm_p_tr
+    p_on = bundle.seg_hmm_p_on
+    assert p_off is not None and p_tr is not None and p_on is not None
+    panels: dict[str, pd.DataFrame] = {
+        "seg_hmm_p_off": p_off,
+        "seg_hmm_p_tr": p_tr,
+        "seg_hmm_p_on": p_on,
+    }
+
+    available = [s for s in BETA_TS_SEGMENTS if s in bundle.seg_hmm_label.columns]
+    default = "global" if "global" in available else available[0]
+    x = p_off.index
+
+    traces: list[go.Scatter] = []
+    for label, attr in _PROB_TRACE_ORDER:
+        traces.append(
+            go.Scatter(
+                x=x,
+                y=panels[attr][default].to_numpy(dtype=float),
+                mode="lines",
+                line={"width": 0.5, "color": REGIME_COLORS[label]},
+                fillcolor=REGIME_COLORS[label],
+                stackgroup="p",
+                name=label,
+                hovertemplate="%{x|%Y-%m-%d}<br>" + label + "=%{y:.2f}<extra></extra>",
+            )
+        )
+
+    buttons: list[dict[str, object]] = []
+    for seg in available:
+        buttons.append(
+            {
+                "method": "update",
+                "label": seg,
+                "args": [
+                    {
+                        "y": [
+                            panels[attr][seg].to_numpy(dtype=float)
+                            for _, attr in _PROB_TRACE_ORDER
+                        ]
+                    },
+                    {"title": f"HMM regime probabilities — {seg}"},
+                ],
+            }
+        )
+
+    return go.Figure(
+        data=traces,
+        layout=go.Layout(
+            title=f"HMM regime probabilities — {default}",
+            height=700,
+            template="simple_white",
+            font={"family": "system-ui, -apple-system, sans-serif", "size": 13},
+            margin={"l": 60, "r": 200, "t": 60, "b": 120},
+            xaxis={
+                "title": "Date",
+                "showgrid": True,
+                "gridcolor": "#e6e6e6",
+                "zeroline": False,
+            },
+            yaxis={
+                "title": "Filtered P(state)",
+                "range": [0.0, 1.0],
+                "showgrid": True,
+                "gridcolor": "#e6e6e6",
+                "zeroline": False,
+            },
+            updatemenus=[
+                {
+                    "type": "dropdown",
+                    "showactive": True,
+                    "buttons": buttons,
+                    "x": 1.12,
+                    "y": 1.0,
+                    "xanchor": "left",
+                    "yanchor": "top",
+                }
+            ],
+        ),
+    )
