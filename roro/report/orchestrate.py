@@ -4,7 +4,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from roro.report.figures import (
+    beta_band_lookup,
     beta_timeseries,
+    regime_probability_area,
     scatter_beta_return,
     scatter_vol_return,
 )
@@ -40,10 +42,16 @@ def build_report(
         scatter_beta_return(bundle),
         beta_timeseries(bundle),
     ]
+    lookup = None
+    if bundle.seg_hmm_label is not None:
+        figures.append(regime_probability_area(bundle))
+        lookup = beta_band_lookup(bundle)
     html = assemble(
         figures,
         run_date=bundle.run_date,
         methodology_version=bundle.methodology_version,
+        beta_div_index=2,
+        beta_band_lookup=lookup,
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(html, encoding="utf-8")
