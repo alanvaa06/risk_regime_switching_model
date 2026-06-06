@@ -725,10 +725,14 @@ def _trim_warmup(vol_pct: pd.DataFrame) -> pd.DataFrame:
 
 
 def _breadth_z(vol_pct: pd.DataFrame, series_ids: list[str]) -> np.ndarray:  # type: ignore[type-arg]
-    """(rank, date) matrix: each date column = that day's percentiles sorted descending."""
+    """(rank, date) matrix: each date column = that day's percentiles sorted descending.
+
+    Empty rank slots (ragged columns, where fewer than all series have a percentile
+    that day) are filled with 0.0 rather than NaN so they render dark, not blank.
+    """
     arr = vol_pct[series_ids].to_numpy(dtype=float)  # (T, M)
     n_dates, n_series = arr.shape
-    z = np.full((n_series, n_dates), np.nan)
+    z = np.zeros((n_series, n_dates))
     for j in range(n_dates):
         valid = arr[j][~np.isnan(arr[j])]
         valid_desc = np.sort(valid)[::-1]

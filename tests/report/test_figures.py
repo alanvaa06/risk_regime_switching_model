@@ -683,6 +683,29 @@ def test_vol_heatmaps_use_plasma_colorscale() -> None:
     assert VOL_COLORSCALE == "Plasma"
 
 
+def test_vol_breadth_heatmap_pads_empty_ranks_with_zero() -> None:
+    idx = pd.bdate_range("2014-01-02", periods=3)
+    # day index 1: B_Eq is NaN → only 1 valid series that column
+    vp = pd.DataFrame(
+        {"A_Eq": [0.9, 0.9, 0.9], "B_Eq": [0.4, np.nan, 0.4]}, index=idx
+    )
+    meta = pd.DataFrame(
+        {"country": ["A", "B"], "asset": ["Eq", "Eq"], "segment": ["DM", "EM"],
+         "weight": [1.0, 1.0]},
+        index=["A_Eq", "B_Eq"],
+    )
+    empty = pd.DataFrame(index=idx)
+    bundle = DataBundle(
+        run_date=idx[-1], methodology_version="1.0.0", dates=pd.DatetimeIndex(idx),
+        vol=empty, ret_3m=empty, beta_vs_global=empty, meta=meta,
+        seg_beta=empty, seg_tercile=empty, vol_pct=vp,
+    )
+    z = np.asarray(vol_breadth_heatmap(bundle).data[0].z, dtype=float)
+    assert z[0, 1] == 0.9          # only valid value at top
+    assert z[1, 1] == 0.0          # empty rank slot → 0, not NaN
+    assert not np.isnan(z).any()   # no blank cells anywhere
+
+
 def test_vol_breadth_heatmap_trims_warmup() -> None:
     idx = pd.bdate_range("2014-01-02", periods=6)
     vp = pd.DataFrame(
