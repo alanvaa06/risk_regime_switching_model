@@ -142,6 +142,17 @@ def load_bundle(
     # seg_beta / seg_tercile carry their full history from the run-dir CSVs.
     # Scatters use the 252d `dates`; the beta time-series uses seg_beta.index.
 
+    seg_hmm_label = seg_hmm_p_off = seg_hmm_p_tr = seg_hmm_p_on = None
+    hmm_path = run_dir / "regimes_hmm.csv"
+    if hmm_path.exists():
+        hmm = pd.read_csv(hmm_path, parse_dates=["date"])
+        seg_hmm_label = hmm.pivot(index="date", columns="segment", values="label").sort_index()
+        seg_hmm_p_off = hmm.pivot(index="date", columns="segment", values="p_risk_off").sort_index()
+        seg_hmm_p_tr = (
+            hmm.pivot(index="date", columns="segment", values="p_transitional").sort_index()
+        )
+        seg_hmm_p_on = hmm.pivot(index="date", columns="segment", values="p_risk_on").sort_index()
+
     return DataBundle(
         run_date=pd.Timestamp(str(snapshot["run_date"])),
         methodology_version=str(snapshot["methodology_version"]),
@@ -152,4 +163,8 @@ def load_bundle(
         meta=meta,
         seg_beta=seg_beta,
         seg_tercile=seg_tercile,
+        seg_hmm_label=seg_hmm_label,
+        seg_hmm_p_off=seg_hmm_p_off,
+        seg_hmm_p_tr=seg_hmm_p_tr,
+        seg_hmm_p_on=seg_hmm_p_on,
     )
