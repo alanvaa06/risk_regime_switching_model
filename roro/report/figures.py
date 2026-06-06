@@ -777,6 +777,66 @@ def vol_breadth_heatmap(bundle: DataBundle) -> go.Figure:
     )
 
 
+def _asset_z_y(vol_pct: pd.DataFrame, series_ids: list[str]) -> tuple[np.ndarray, list[str]]:  # type: ignore[type-arg]
+    """(series, date) matrix + row labels, rows ordered by mean percentile descending."""
+    sub = vol_pct[series_ids]
+    order = list(sub.mean().sort_values(ascending=False).index)
+    z = sub[order].to_numpy(dtype=float).T  # (series, date)
+    return z, order
+
+
+def vol_pct_asset_heatmap(bundle: DataBundle) -> go.Figure:
+    """Per-asset vol-percentile heatmap (rows = series, mean-ordered) with class toggle."""
+    assert bundle.vol_pct is not None
+    subsets = _class_subsets(bundle)
+    x = bundle.vol_pct.index
+    zy_by_class = {k: _asset_z_y(bundle.vol_pct, ids) for k, ids in subsets.items()}
+    default = "All"
+    z0, y0 = zy_by_class[default]
+
+    trace = go.Heatmap(
+        z=z0,
+        x=x,
+        y=y0,
+        zmin=0.0,
+        zmax=1.0,
+        colorscale=VOL_COLORSCALE,
+        colorbar={"title": "vol pctile"},
+        hovertemplate="%{x|%Y-%m-%d}<br>%{y}<br>pctile=%{z:.2f}<extra></extra>",
+    )
+
+    buttons = []
+    for k in ("All", "Eq", "FI"):
+        zk, yk = zy_by_class[k]
+        buttons.append(
+            {
+                "method": "update",
+                "label": k,
+                "args": [
+                    {"z": [zk], "y": [yk]},
+                    {"title": f"Volatility percentile by asset — {k}"},
+                ],
+            }
+        )
+
+    return go.Figure(
+        data=[trace],
+        layout=go.Layout(
+            title=f"Volatility percentile by asset — {default}",
+            height=700,
+            template="simple_white",
+            font={"family": "system-ui, -apple-system, sans-serif", "size": 13},
+            margin={"l": 120, "r": 200, "t": 60, "b": 120},
+            xaxis={"title": "Date"},
+            yaxis={"title": "Asset", "autorange": "reversed"},
+            updatemenus=[
+                {"type": "dropdown", "showactive": True, "buttons": buttons,
+                 "x": 1.12, "y": 1.0, "xanchor": "left", "yanchor": "top"}
+            ],
+        ),
+    )
+
+
 _PROB_TRACE_ORDER: tuple[tuple[str, str], ...] = (
     ("Risk-off", "seg_hmm_p_off"),
     ("Transitional", "seg_hmm_p_tr"),

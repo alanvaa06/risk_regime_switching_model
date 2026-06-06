@@ -20,6 +20,7 @@ from roro.report.figures import (
     scatter_beta_return,
     scatter_vol_return,
     vol_breadth_heatmap,
+    vol_pct_asset_heatmap,
 )
 from roro.report.load import load_bundle
 
@@ -663,5 +664,14 @@ def test_vol_breadth_heatmap_columns_sorted_descending() -> None:
     assert abs(col0[0] - 0.9) < 1e-9 and abs(col0[2] - 0.1) < 1e-9
     menus = fig.layout.updatemenus
     assert len(menus) == 1
+    assert [b.label for b in menus[0].buttons] == ["All", "Eq", "FI"]
+    assert fig.data[0].zmin == 0.0 and fig.data[0].zmax == 1.0
+
+
+def test_vol_pct_asset_heatmap_rows_ordered_by_mean_desc() -> None:
+    fig = vol_pct_asset_heatmap(_bundle_with_vol_pct())
+    assert len(fig.data) == 1
+    assert list(fig.data[0].y) == ["A_Eq", "B_Eq", "C_FI"]
+    menus = fig.layout.updatemenus
     assert [b.label for b in menus[0].buttons] == ["All", "Eq", "FI"]
     assert fig.data[0].zmin == 0.0 and fig.data[0].zmax == 1.0
