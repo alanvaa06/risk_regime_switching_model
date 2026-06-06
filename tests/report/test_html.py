@@ -97,6 +97,10 @@ def test_assemble_accepts_four_figures_with_hmm_toggle() -> None:
     assert 'id="hmm-band-method"' in html
     assert "plotly_relayout" in html
     assert "fig_beta_ts" in html
+    # toggle sits directly above the beta-timeseries section it controls,
+    # not orphaned at the page bottom after the HMM probability figure
+    assert html.index('id="hmm-band-method"') < html.index("Segment β with regime bands")
+    assert html.index("Segment β with regime bands") < html.index("HMM regime probabilities")
 
 
 def test_assemble_three_figures_unchanged_without_lookup() -> None:
