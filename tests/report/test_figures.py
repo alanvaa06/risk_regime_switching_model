@@ -19,6 +19,7 @@ from roro.report.figures import (
     regime_probability_area,
     scatter_beta_return,
     scatter_vol_return,
+    vol_breadth_heatmap,
 )
 from roro.report.load import load_bundle
 
@@ -633,3 +634,34 @@ def test_beta_band_lookup_has_both_methods_per_segment() -> None:
     shp = lookup["global"]["hmm"][0]
     assert isinstance(shp["x0"], str)
     assert shp["type"] == "rect"
+
+
+def _bundle_with_vol_pct() -> DataBundle:
+    idx = pd.bdate_range("2014-01-02", periods=8)
+    vp = pd.DataFrame(
+        {"A_Eq": [0.9] * 8, "B_Eq": [0.5] * 8, "C_FI": [0.1] * 8}, index=idx
+    )
+    meta = pd.DataFrame(
+        {"country": ["A", "B", "C"], "asset": ["Eq", "Eq", "FI"],
+         "segment": ["DM", "EM", "DM"], "weight": [1.0, 1.0, 1.0]},
+        index=["A_Eq", "B_Eq", "C_FI"],
+    )
+    empty = pd.DataFrame(index=idx)
+    return DataBundle(
+        run_date=idx[-1], methodology_version="1.0.0", dates=pd.DatetimeIndex(idx),
+        vol=empty, ret_3m=empty, beta_vs_global=empty, meta=meta,
+        seg_beta=empty, seg_tercile=empty, vol_pct=vp,
+    )
+
+
+def test_vol_breadth_heatmap_columns_sorted_descending() -> None:
+    fig = vol_breadth_heatmap(_bundle_with_vol_pct())
+    assert len(fig.data) == 1
+    z = np.asarray(fig.data[0].z, dtype=float)
+    col0 = z[:, 0]
+    assert col0[0] >= col0[1] >= col0[2]
+    assert abs(col0[0] - 0.9) < 1e-9 and abs(col0[2] - 0.1) < 1e-9
+    menus = fig.layout.updatemenus
+    assert len(menus) == 1
+    assert [b.label for b in menus[0].buttons] == ["All", "Eq", "FI"]
+    assert fig.data[0].zmin == 0.0 and fig.data[0].zmax == 1.0

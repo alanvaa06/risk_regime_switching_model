@@ -9,6 +9,7 @@ import plotly.graph_objects as go
 from scipy.stats import linregress
 
 from roro.report.bundle import DataBundle
+from roro.segments import ASSET_EQ, ASSET_FI
 
 SegmentFilter = Literal["Full", "DM", "EM", "DM_Eq", "EM_Eq", "DM_FI", "EM_FI"]
 
@@ -700,6 +701,80 @@ def beta_band_lookup(bundle: DataBundle) -> dict[str, dict[str, list[dict[str, o
             hmm = _band_shapes(bundle.seg_hmm_label[seg], smooth=False)
         out[seg] = {"percentile": percentile, "hmm": hmm}
     return out
+
+
+VOL_COLORSCALE: list[list[object]] = [[0.0, "#ffffff"], [0.5, "#f4a582"], [1.0, "#b2182b"]]
+
+
+def _class_subsets(bundle: DataBundle) -> dict[str, list[str]]:
+    """series_id lists for All / Eq / FI, restricted to vol_pct columns present in meta."""
+    assert bundle.vol_pct is not None
+    cols = [c for c in bundle.vol_pct.columns if c in bundle.meta.index]
+    eq = [c for c in cols if bundle.meta.loc[c, "asset"] == ASSET_EQ]
+    fi = [c for c in cols if bundle.meta.loc[c, "asset"] == ASSET_FI]
+    return {"All": cols, "Eq": eq, "FI": fi}
+
+
+def _breadth_z(vol_pct: pd.DataFrame, series_ids: list[str]) -> np.ndarray:  # type: ignore[type-arg]
+    """(rank, date) matrix: each date column = that day's percentiles sorted descending."""
+    arr = vol_pct[series_ids].to_numpy(dtype=float)  # (T, M)
+    n_dates, n_series = arr.shape
+    z = np.full((n_series, n_dates), np.nan)
+    for j in range(n_dates):
+        valid = arr[j][~np.isnan(arr[j])]
+        valid_desc = np.sort(valid)[::-1]
+        z[: valid_desc.shape[0], j] = valid_desc
+    return z
+
+
+def vol_breadth_heatmap(bundle: DataBundle) -> go.Figure:
+    """Sorted-rank breadth heatmap of vol percentiles, with an All/Eq/FI class toggle."""
+    assert bundle.vol_pct is not None
+    subsets = _class_subsets(bundle)
+    x = bundle.vol_pct.index
+    z_by_class = {k: _breadth_z(bundle.vol_pct, ids) for k, ids in subsets.items()}
+    default = "All"
+    z0 = z_by_class[default]
+
+    trace = go.Heatmap(
+        z=z0,
+        x=x,
+        y=list(range(1, z0.shape[0] + 1)),
+        zmin=0.0,
+        zmax=1.0,
+        colorscale=VOL_COLORSCALE,
+        colorbar={"title": "vol pctile"},
+        hovertemplate="%{x|%Y-%m-%d}<br>rank %{y}<br>pctile=%{z:.2f}<extra></extra>",
+    )
+
+    buttons = [
+        {
+            "method": "update",
+            "label": k,
+            "args": [
+                {"z": [z_by_class[k]], "y": [list(range(1, z_by_class[k].shape[0] + 1))]},
+                {"title": f"Volatility breadth (sorted percentile) — {k}"},
+            ],
+        }
+        for k in ("All", "Eq", "FI")
+    ]
+
+    return go.Figure(
+        data=[trace],
+        layout=go.Layout(
+            title=f"Volatility breadth (sorted percentile) — {default}",
+            height=700,
+            template="simple_white",
+            font={"family": "system-ui, -apple-system, sans-serif", "size": 13},
+            margin={"l": 60, "r": 200, "t": 60, "b": 120},
+            xaxis={"title": "Date"},
+            yaxis={"title": "Asset rank (1 = highest vol pctile)", "autorange": "reversed"},
+            updatemenus=[
+                {"type": "dropdown", "showactive": True, "buttons": buttons,
+                 "x": 1.12, "y": 1.0, "xanchor": "left", "yanchor": "top"}
+            ],
+        ),
+    )
 
 
 _PROB_TRACE_ORDER: tuple[tuple[str, str], ...] = (
