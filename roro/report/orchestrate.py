@@ -10,7 +10,7 @@ from roro.report.figures import (
     scatter_beta_return,
     scatter_vol_return,
 )
-from roro.report.html import assemble
+from roro.report.html import FigureSpec, assemble
 from roro.report.load import DEFAULT_WINDOW, load_bundle
 
 
@@ -37,20 +37,22 @@ def build_report(
         FileNotFoundError: xlsx_path does not exist.
     """
     bundle = load_bundle(run_dir, xlsx_path, window=window)
-    figures = [
-        scatter_vol_return(bundle),
-        scatter_beta_return(bundle),
-        beta_timeseries(bundle),
+    specs = [
+        FigureSpec(scatter_vol_return(bundle), "fig_scatter_vol", "Risk vs Return"),
+        FigureSpec(scatter_beta_return(bundle), "fig_scatter_beta", "Beta vs Return"),
+        FigureSpec(beta_timeseries(bundle), "fig_beta_ts", "Segment β with regime bands"),
     ]
     lookup = None
     if bundle.seg_hmm_label is not None:
-        figures.append(regime_probability_area(bundle))
+        specs.append(FigureSpec(
+            regime_probability_area(bundle), "fig_hmm_probs", "HMM regime probabilities"
+        ))
         lookup = beta_band_lookup(bundle)
     html = assemble(
-        figures,
+        specs,
         run_date=bundle.run_date,
         methodology_version=bundle.methodology_version,
-        beta_div_index=2,
+        beta_div_id="fig_beta_ts",
         beta_band_lookup=lookup,
     )
     out_path.parent.mkdir(parents=True, exist_ok=True)

@@ -1,20 +1,11 @@
-"""Assemble three or four Plotly figures into a single self-contained HTML page."""
+"""Assemble Plotly figures into a single self-contained HTML page."""
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 
 import pandas as pd
 import plotly.graph_objects as go
-
-DIV_IDS: tuple[str, ...] = ("fig_scatter_vol", "fig_scatter_beta", "fig_beta_ts", "fig_hmm_probs")
-SECTION_TITLES: tuple[str, ...] = (
-    "Risk vs Return",
-    "Beta vs Return",
-    "Segment β with regime bands",
-    "HMM regime probabilities",
-)
-_MIN_FIGURES: int = 3
-_MAX_FIGURES: int = 4
 
 _CSS = """
 :root { color-scheme: light; }
@@ -33,6 +24,15 @@ section { background: #fff; border: 1px solid #e6e6e6; border-radius: 8px;
 section h2 { margin: 0 0 12px; font-size: 18px; }
 footer { color: #888; font-size: 12px; text-align: center; padding: 16px; }
 """
+
+
+@dataclass(frozen=True)
+class FigureSpec:
+    """Explicit per-figure specification: figure, div id, and section title."""
+
+    figure: go.Figure
+    div_id: str
+    title: str
 
 
 def _band_toggle_markup(
@@ -89,54 +89,51 @@ def _band_toggle_markup(
 
 
 def assemble(
-    figures: list[go.Figure],
+    specs: list[FigureSpec],
     *,
     run_date: pd.Timestamp,
     methodology_version: str,
-    beta_div_index: int | None = None,
+    beta_div_id: str | None = None,
     beta_band_lookup: dict[str, dict[str, list[dict[str, object]]]] | None = None,
 ) -> str:
-    """Assemble three or four figures into one self-contained HTML page.
+    """Assemble figure specs into one self-contained HTML report page.
 
     Args:
-        figures: list of 3 or 4 Plotly figures
-            (scatter_vol_return, scatter_beta_return, beta_timeseries[, hmm_probs]).
+        specs: list of FigureSpec (figure + div_id + title), at least one required.
         run_date: report run date for header.
         methodology_version: engine methodology version string.
-        beta_div_index: index into figures of the beta timeseries figure (for toggle wiring).
+        beta_div_id: div_id of the beta timeseries figure (for band toggle wiring).
         beta_band_lookup: mapping of segment -> method -> list of shape dicts.
-            When provided, a <select> + JS toggle is injected directly above the
-            beta-timeseries section.
+            When both beta_div_id and beta_band_lookup are provided, a <select> + JS
+            toggle is injected directly above the beta-timeseries section.
 
     Returns:
         Full HTML document string (starts with <!DOCTYPE html>).
 
     Raises:
-        ValueError: if `figures` does not contain 3-4 entries.
+        ValueError: if ``specs`` is empty.
     """
-    if not _MIN_FIGURES <= len(figures) <= _MAX_FIGURES:
-        raise ValueError(
-            f"assemble requires {_MIN_FIGURES}-{_MAX_FIGURES} figures, got {len(figures)}"
-        )
+    if not specs:
+        raise ValueError("assemble requires at least one figure")
 
     # First fig pulls plotly.js from CDN; subsequent figs reuse it.
     fig_html_blocks: list[str] = []
-    for idx, fig in enumerate(figures):
-        div_id = DIV_IDS[idx]
-        title = SECTION_TITLES[idx]
+    for idx, spec in enumerate(specs):
         include: str | bool = "cdn" if idx == 0 else False
-        block = fig.to_html(
+        block = spec.figure.to_html(
             include_plotlyjs=include,
             full_html=False,
-            div_id=div_id,
+            div_id=spec.div_id,
             config={"displaylogo": False},
         )
-        fig_html_blocks.append(f'<section><h2>{title}</h2>{block}</section>')
+        fig_html_blocks.append(f'<section><h2>{spec.title}</h2>{block}</section>')
 
-    if beta_band_lookup is not None and beta_div_index is not None:
-        toggle = _band_toggle_markup(DIV_IDS[beta_div_index], beta_band_lookup)
-        # Place the band toggle directly above the beta-timeseries section it controls.
-        fig_html_blocks.insert(beta_div_index, toggle)
+    if beta_band_lookup is not None and beta_div_id is not None:
+        toggle = _band_toggle_markup(beta_div_id, beta_band_lookup)
+        beta_pos = next(
+            (i for i, s in enumerate(specs) if s.div_id == beta_div_id), len(fig_html_blocks)
+        )
+        fig_html_blocks.insert(beta_pos, toggle)
 
     return f"""<!DOCTYPE html>
 <html lang="en">
