@@ -260,6 +260,14 @@ Figures 5–6 use **simple realized volatility** (rolling 63-day stdev × √252
 
 ![Segment beta time-series with regime bands](docs/assets/report_beta_timeseries.png)
 
+**HMM regime probabilities** *(HMM overlay enabled)* — per-segment stacked **filtered** state probabilities (Risk-on green / Transitional grey / Risk-off red, summing to 1.0) over full history. A thin dominant band marks low model confidence; the soft view the percentile hard labels cannot express.
+
+![HMM regime probabilities stacked area](docs/assets/HMM.png)
+
+**Volatility breadth (sorted percentile)** — each day's cross-section of per-series 63-day realized-vol percentiles (ranked against each series' expanding ≥5-year history), **sorted descending**. The thickness of the bright (high-percentile) band is the count of assets at elevated volatility — the 2020 COVID column lights up almost top-to-bottom, while calm stretches stay dark. Plasma scale; All / Eq / FI class toggle.
+
+![Volatility breadth sorted-percentile heatmap](docs/assets/Vol%20Breadth.png)
+
 **Confidence ribbon math.** For an OLS fit `ŷ = a + b·x`, the 95% band uses the standard-error-of-fit
 ```
 SE(ŷ | x) = √( SE_a² + (x − x̄)² · SE_b² ),   band = ŷ ± 1.96 · SE(ŷ | x)
