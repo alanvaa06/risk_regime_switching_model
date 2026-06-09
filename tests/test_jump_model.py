@@ -6,7 +6,10 @@ import numpy as np
 
 from roro.jump_model import (
     _forward_values,
+    _kmeanspp_init,
     _loss_matrix,
+    _objective,
+    _update_centroids,
     _viterbi_path,
     fit_jump_model,
     online_states,
@@ -106,3 +109,38 @@ def test_online_states_returns_intp() -> None:
     y = np.array([0.0, 1.0, 2.0])
     c = np.array([0.0, 2.0])
     assert online_states(y, c, 1.0).dtype == np.intp
+
+
+def test_update_centroids_sequential_reseed_two_empty() -> None:
+    # k=3 but labels only use state 1 -> states 0 and 2 are empty and must reseed
+    # to DISTINCT farthest points (not collide on the same point).
+    y = np.array([0.0, 0.1, 0.2, 5.0, 9.0])
+    labels = np.array([1, 1, 1, 1, 1], dtype=np.intp)
+    prev = np.array([0.1, 0.1, 0.1])
+    out = _update_centroids(y, labels, 3, prev)
+    assert np.all(np.isfinite(out))
+    # the two reseeded empties must be the two farthest-from-occupied DISTINCT points
+    assert len(set(np.round(out, 6))) >= 2  # not all identical -> no collision
+
+
+def test_kmeanspp_init_all_coincident_points() -> None:
+    y = np.full(20, 3.0)
+    rng = np.random.default_rng(0)
+    centers = _kmeanspp_init(y, 3, rng)
+    assert centers.shape == (3,)
+    assert np.all(np.isfinite(centers))
+    assert np.allclose(centers, 3.0)  # all coincide -> all centers == the only value
+
+
+def test_kmeanspp_init_is_seed_reproducible() -> None:
+    y = np.random.default_rng(1).normal(size=100)
+    a = _kmeanspp_init(y, 3, np.random.Generator(np.random.PCG64(np.random.SeedSequence(0))))
+    b = _kmeanspp_init(y, 3, np.random.Generator(np.random.PCG64(np.random.SeedSequence(0))))
+    assert np.array_equal(a, b)
+
+
+def test_objective_fit_loss_plus_jump_penalty() -> None:
+    loss_mx = np.array([[0.0, 1.0], [1.0, 0.0], [0.0, 1.0]])
+    labels = np.array([0, 1, 0], dtype=np.intp)  # picks 0.0, 0.0, 0.0 -> fit_loss 0
+    # transitions: 0->1 (jump), 1->0 (jump) = 2 jumps
+    assert _objective(loss_mx, labels, 5.0) == 0.0 + 5.0 * 2

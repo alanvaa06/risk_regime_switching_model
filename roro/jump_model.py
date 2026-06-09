@@ -152,7 +152,7 @@ def _fit_once(
         loss_mx = _loss_matrix(y, centroids)
         new_labels = _viterbi_path(loss_mx, jump_penalty)
         new_obj = _objective(loss_mx, new_labels, jump_penalty)
-        stop = bool(np.array_equal(new_labels, labels)) or (obj - new_obj) < tol
+        stop = bool(np.array_equal(new_labels, labels)) or (0.0 <= obj - new_obj < tol)
         labels, obj = new_labels, new_obj
         if stop:
             break
@@ -185,6 +185,9 @@ def fit_jump_model(
             best = (centroids, labels, obj)
     assert best is not None
     centroids, labels, obj = best
+    # `converged` = finite output (centroids + objective), NOT "reached the label
+    # fixed point" -- a max_iter run with finite centroids still counts converged,
+    # so walk_forward's last_good fallback only triggers on genuinely degenerate fits.
     converged = bool(np.all(np.isfinite(centroids)) and np.isfinite(obj))
     perm: NDArray[np.intp] = np.argsort(centroids, kind="stable").astype(np.intp)
     inv: NDArray[np.intp] = np.argsort(perm, kind="stable").astype(np.intp)
