@@ -32,4 +32,15 @@ Spec: `docs/superpowers/specs/2026-06-03-roro-hmm-regime-design.md`
 - [x] Harness built (Tasks 1–6): roro/gate_diagnostics.py + `roro gate-diagnostics` CLI subcommand. 188 tests green.
 - [x] Task 7: harness run, memo written. Only G5 is a real discriminating failure. Memo: docs/analysis/2026-06-09-gate-diagnostics-memo.md.
 - [ ] Follow-up: **Gate recalibration spec** — tier G1/G2/G6 as pipeline-health; fix G3 (drop out-of-range 2008 event); re-set G4/G5 thresholds off a calibration split; possibly adopt frontier-Pareto as G5 bar.
-- [ ] **JM core (jump_model.py) — in progress** (feat/jump-model branch, JM-PRD.md). Runs against recalibrated scorecard.
+
+## Statistical Jump Model (2026-06-09) — DONE (feat/jump-model)
+Spec: `docs/superpowers/specs/2026-06-09-jm-regime-design.md` · Plan: `docs/superpowers/plans/2026-06-09-jump-model.md`
+- [x] J0 — vendored numpy-only JM core (`roro/jump_model.py`): seeded k-means++, forward/Viterbi DP, coordinate descent, empty-cluster reseed, n_init restarts, mean-canonical labels; discrete + continuous (simplex grid, BLAS-free).
+- [x] J1 — causal `walk_forward` (`roro/regime_jm.py`): expanding/rolling refit + frozen-scaler forward-DP online inference; no-lookahead (incl. block boundary) + last_good fallback tested. Config `jm_*` (12 fields) + `JmRegimeFrame`.
+- [x] J2 — `classify_jm` + engine/io/alerts wiring (`regimes_jm.csv`, `jm_refit_log.csv`, snapshot block); golden/byte-identical determinism (AJ-1 off, AJ-2 on for discrete+CJM).
+- [x] J3 — continuous JM soft probabilities (BLAS-free broadcast + 10-dp round).
+- [x] J4 — backtest scores JM through G1–G6 → `acceptance_report_jm.json` + 3-way `acceptance_compare.json`.
+- [x] J5 — report 3-way Percentile/HMM/JM band toggle + JM state-probability figure (`fig_jm_probs`).
+- [x] J6 — end-to-end real-data run (2008–2026): JM regimes render in HTML (Risk-off 1268 / Transitional 1320 / Risk-on 1637 / 315 warmup; non-degenerate). `outputs/jm_only_report.html`.
+- Decisions D1–D5 locked (research-backed). Off by default. Promotion to production default deferred to the AJ-7 decision (JM clears G5 outright AND in-range G3 ≥ 7/7) against the recalibrated scorecard.
+- [ ] Follow-ups (out of scope): λ re-calibration on standardized features (S-JM3); cadence-invariance bench (AJ-4); sparse multivariate JM + FTIC (S-JM6, where log(P)>0 activates FTIC).
