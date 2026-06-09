@@ -91,3 +91,53 @@ def test_load_bundle_vol_pct_full_history_with_warmup(
     vals = bundle.vol_pct.to_numpy(dtype=float)
     finite = vals[np.isfinite(vals)]
     assert (finite >= 0).all() and (finite <= 1).all()
+
+
+def _write_jm_csv(run_dir: Path) -> Path:
+    """Add a regimes_jm.csv to an existing run dir (mirrors write_hmm_csv)."""
+    dates = pd.bdate_range("2020-01-02", "2024-12-31")
+    rows = []
+    labels = ("Risk-off", "Transitional", "Risk-on")
+    for i, d in enumerate(dates):
+        for seg in ("global", "DM", "EM", "EM_Eq", "EM_FI"):
+            lab = labels[i % 3]
+            p = {
+                "Risk-off": (0.7, 0.2, 0.1),
+                "Transitional": (0.2, 0.6, 0.2),
+                "Risk-on": (0.1, 0.2, 0.7),
+            }[lab]
+            rows.append(
+                {
+                    "date": d,
+                    "segment": seg,
+                    "state": labels.index(lab),
+                    "label": lab,
+                    "p_risk_off": p[0],
+                    "p_transitional": p[1],
+                    "p_risk_on": p[2],
+                    "confidence": max(p),
+                    "cold_start": False,
+                    "thin_cut": False,
+                }
+            )
+    path = run_dir / "regimes_jm.csv"
+    pd.DataFrame(rows).to_csv(path, index=False)
+    return path
+
+
+def test_load_picks_up_jm_csv(minimal_run_dir: Path, tiny_xlsx: Path) -> None:
+    _write_jm_csv(minimal_run_dir)
+    bundle = load_bundle(minimal_run_dir, tiny_xlsx, window=21)
+    assert bundle.seg_jm_label is not None
+    assert "global" in bundle.seg_jm_label.columns
+    assert bundle.seg_jm_p_off is not None
+    assert bundle.seg_jm_p_off.shape == bundle.seg_jm_label.shape
+    assert bundle.seg_jm_p_tr is not None and bundle.seg_jm_p_on is not None
+
+
+def test_load_bundle_jm_none_when_absent(minimal_run_dir: Path, tiny_xlsx: Path) -> None:
+    bundle = load_bundle(minimal_run_dir, tiny_xlsx, window=21)
+    assert bundle.seg_jm_label is None
+    assert bundle.seg_jm_p_off is None
+    assert bundle.seg_jm_p_tr is None
+    assert bundle.seg_jm_p_on is None

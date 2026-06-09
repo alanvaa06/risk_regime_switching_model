@@ -158,6 +158,17 @@ def load_bundle(
         )
         seg_hmm_p_on = hmm.pivot(index="date", columns="segment", values="p_risk_on").sort_index()
 
+    seg_jm_label = seg_jm_p_off = seg_jm_p_tr = seg_jm_p_on = None
+    jm_path = run_dir / "regimes_jm.csv"
+    if jm_path.exists():
+        jm = pd.read_csv(jm_path, parse_dates=["date"])
+        seg_jm_label = jm.pivot(index="date", columns="segment", values="label").sort_index()
+        seg_jm_p_off = jm.pivot(index="date", columns="segment", values="p_risk_off").sort_index()
+        seg_jm_p_tr = (
+            jm.pivot(index="date", columns="segment", values="p_transitional").sort_index()
+        )
+        seg_jm_p_on = jm.pivot(index="date", columns="segment", values="p_risk_on").sort_index()
+
     return DataBundle(
         run_date=pd.Timestamp(str(snapshot["run_date"])),
         methodology_version=str(snapshot["methodology_version"]),
@@ -172,5 +183,9 @@ def load_bundle(
         seg_hmm_p_off=seg_hmm_p_off,
         seg_hmm_p_tr=seg_hmm_p_tr,
         seg_hmm_p_on=seg_hmm_p_on,
+        seg_jm_label=seg_jm_label,
+        seg_jm_p_off=seg_jm_p_off,
+        seg_jm_p_tr=seg_jm_p_tr,
+        seg_jm_p_on=seg_jm_p_on,
         vol_pct=vol_pct,
     )
