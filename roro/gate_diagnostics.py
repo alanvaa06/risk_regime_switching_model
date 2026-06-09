@@ -8,9 +8,11 @@ no production artifacts and mutates nothing.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pandas as pd
 
-from roro.backtest import _TERCILE_ORDINAL
+from roro.backtest import _TERCILE_ORDINAL, Event, _event_hits
 
 _SHARED_EPS = 1e-9
 _BORDERLINE_REL = 0.15
@@ -79,3 +81,22 @@ def classify_gate(
     if not passed and threshold != 0 and abs(value - threshold) / abs(threshold) <= _BORDERLINE_REL:
         return "borderline"
     return "real"
+
+
+def repair_g3(
+    labels: pd.DataFrame,
+    events: tuple[Event, ...],
+    *,
+    start: str,
+    end: str,
+) -> dict[str, Any]:
+    """G3 with out-of-range events excluded; graded k/total_in_range."""
+    hits, total_in_range, out_of_range = _event_hits(labels, events, start=start, end=end)
+    graded = float(hits / total_in_range) if total_in_range else 0.0
+    return {
+        "hits": hits,
+        "total_in_range": total_in_range,
+        "out_of_range": out_of_range,
+        "graded": graded,
+        "passed_in_range": bool(total_in_range > 0 and hits == total_in_range),
+    }
