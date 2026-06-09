@@ -174,6 +174,14 @@ def _gate_external_corr(
     return {"passed": bool(fraction >= fraction_min), "fraction_above": fraction}
 
 
+def _event_window_match(local: pd.DataFrame, event: Event) -> bool:
+    """True if any of the event's segments shows an expected bucket in the window."""
+    for seg in event.segments:
+        if seg in local.columns and local[seg].isin(event.expected_buckets).any():
+            return True
+    return False
+
+
 def _gate_events(terc: pd.DataFrame) -> dict[str, Any]:
     hits = 0
     details: list[dict[str, Any]] = []
@@ -182,11 +190,7 @@ def _gate_events(terc: pd.DataFrame) -> dict[str, Any]:
         window_start = ts - pd.Timedelta(days=_EVENT_WINDOW_DAYS)
         window_end = ts + pd.Timedelta(days=_EVENT_WINDOW_DAYS)
         local = terc.loc[(terc.index >= window_start) & (terc.index <= window_end)]
-        ok = False
-        for seg in event.segments:
-            if seg in local.columns and local[seg].isin(event.expected_buckets).any():
-                ok = True
-                break
+        ok = _event_window_match(local, event)
         details.append({"event": event.name, "matched": ok})
         if ok:
             hits += 1
@@ -199,7 +203,10 @@ def _gate_events(terc: pd.DataFrame) -> dict[str, Any]:
 
 
 def _calm_quarters(daily_log_returns: pd.DataFrame) -> pd.DatetimeIndex:
-    """Quarter-end timestamps whose mean realized vol is below the median quarter."""
+    """Quarter-end timestamps whose mean realized vol is below the median quarter.
+
+    Uses the first column of ``daily_log_returns`` as the global vol proxy.
+    """
     if daily_log_returns.empty:
         return pd.DatetimeIndex([])
     proxy = daily_log_returns.iloc[:, 0].dropna()
@@ -230,7 +237,7 @@ def _count_max_calm_transitions(
     seg = t[t["segment"] == segment]
     by_quarter = seg.groupby("quarter").size()
     counts = by_quarter.reindex(calm_quarters, fill_value=0)
-    return float(counts.max()) if len(counts) else 0.0
+    return float(counts.max())
 
 
 def _event_hits(
@@ -259,10 +266,8 @@ def _event_hits(
             continue
         in_range += 1
         local = labels.loc[(labels.index >= w_start) & (labels.index <= w_end)]
-        for seg in event.segments:
-            if seg in local.columns and local[seg].isin(event.expected_buckets).any():
-                hits += 1
-                break
+        if _event_window_match(local, event):
+            hits += 1
     return hits, in_range, out_of_range
 
 

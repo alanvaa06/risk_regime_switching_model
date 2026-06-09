@@ -128,6 +128,8 @@ def test_calm_quarters_returns_low_vol_quarter_ends() -> None:
     assert isinstance(calm, pd.DatetimeIndex)
     assert len(calm) >= 1
     assert calm.equals(calm.normalize())
+    assert pd.Timestamp("2020-09-30") in calm  # Q3-2020 quiet -> calm
+    assert pd.Timestamp("2021-09-30") not in calm  # Q3-2021 loud -> not calm
 
 
 def test_count_max_calm_transitions_counts_only_calm_global() -> None:
@@ -160,28 +162,50 @@ def test_event_hits_flags_out_of_range_events() -> None:
     assert out_of_range == ["before_start"]
 
 
-def test_gate_stability_threshold_kwarg_overrides_default() -> None:
-    idx = pd.bdate_range("2020-01-01", "2020-12-31")
-    daily = pd.DataFrame({"global": pd.Series(1e-4, index=idx)})
-    transitions = pd.DataFrame(
-        {"date": [idx[10], idx[11], idx[12]], "segment": ["global"] * 3,
-         "from_bucket": ["a", "b", "a"], "to_bucket": ["b", "a", "b"]}
+def _result_with_daily(daily: pd.DataFrame) -> RunResult:
+    empty = pd.DataFrame()
+    empty_dt = pd.DataFrame(index=pd.DatetimeIndex([]))
+    bf = BetaFrame(cap_wtd=empty, eq_wtd=empty, slope_spread=pd.Series(dtype=float))
+    bbs = BetaBySegment(by_segment={"global": bf})
+    return RunResult(
+        config=EngineConfig(data_path=Path("d.xlsx"), output_dir=Path("o")),
+        universe=Universe(countries=empty, composites=empty),
+        returns=ReturnsFrame(log_returns_3m=empty, daily_log_returns=daily),
+        vol=VolFrame(ewma_sigma_annualized=empty),
+        beta=bbs,
+        regime=RegimeFrame(percentile_5y=empty, tercile=empty_dt, quintile=empty,
+                           direction=empty, n_per_segment=empty, thin_cut_flag=empty,
+                           bootstrap_flag=empty),
+        correlation=CorrelationFrame(avg_pairwise_3m=empty, pc1_variance_share=empty),
+        validation=ValidationFrame(rolling_corr_60d=empty, internal_consistency=empty,
+                                   correlation_alerts=empty),
+        tripwire=bbs,
+        alerts=AlertSet(bucket_transitions=empty, disagreement_events=empty,
+                        validation_degradation=empty),
     )
-    calm = _calm_quarters(daily)
-    worst = _count_max_calm_transitions(transitions, calm, segment="global")
-    assert worst >= 0.0  # smoke: helper callable with explicit args
 
-    # Prove _gate_stability accepts max_calm_transitions kwarg.
-    empty_transitions = pd.DataFrame(
-        columns=["date", "segment", "from_bucket", "to_bucket"]
-    )
-    # Call directly: empty transitions → early-return True regardless of threshold.
-    gate_out = _gate_stability(
-        None,  # type: ignore[arg-type]  # not reached — transitions.empty short-circuits
-        empty_transitions,
-        max_calm_transitions=0.0,
-    )
-    assert gate_out["passed"] is True
+
+def test_gate_stability_max_calm_transitions_kwarg_changes_verdict() -> None:
+    """The kwarg must flip `passed` at the worst-count boundary (not be ignored)."""
+    idx = pd.bdate_range("2020-01-01", "2021-12-31")
+    rng = np.random.default_rng(42)
+    # 2020 quiet, 2021 loud -> 2020 quarters are calm (below median vol).
+    vals = np.concatenate([rng.normal(0, 1e-5, 261), rng.normal(0, 1e-2, len(idx) - 261)])
+    daily = pd.DataFrame({"global": pd.Series(vals, index=idx)})
+    # 5 transitions in Q3-2020 (a calm quarter, rolling std fully populated + small).
+    transitions = pd.DataFrame({
+        "date": [pd.Timestamp("2020-08-03")] * 5,
+        "segment": ["global"] * 5,
+        "from_bucket": ["Risk-on", "Risk-off", "Risk-on", "Risk-off", "Risk-on"],
+        "to_bucket": ["Risk-off", "Risk-on", "Risk-off", "Risk-on", "Risk-off"],
+    })
+    result = _result_with_daily(daily)
+    worst = _gate_stability(result, transitions)["max_transitions_in_calm_quarter"]
+    assert worst >= 1.0  # the 5 transitions landed in a calm quarter
+    r_tight = _gate_stability(result, transitions, max_calm_transitions=worst - 1)
+    r_loose = _gate_stability(result, transitions, max_calm_transitions=worst)
+    assert r_tight["passed"] is False
+    assert r_loose["passed"] is True
 
 
 @pytest.mark.slow
