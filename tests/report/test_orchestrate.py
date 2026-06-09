@@ -1,6 +1,7 @@
 """build_report orchestrator tests."""
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -85,3 +86,31 @@ def test_build_report_includes_vol_heatmaps(
     assert "fig_vol_assets" in html
     assert "Volatility breadth (sorted percentile)" in html
     assert "Volatility percentile by asset" in html
+
+
+def test_build_report_includes_jm_when_present(
+    minimal_run_dir: Path,
+    tiny_xlsx: Path,
+    tmp_path: Path,
+    write_jm_csv: Callable[[Path], Path],
+) -> None:
+    from roro.report import build_report  # noqa: PLC0415
+
+    write_jm_csv(minimal_run_dir)
+    out = tmp_path / "r.html"
+    build_report(minimal_run_dir, tiny_xlsx, out, window=21)
+    html = out.read_text(encoding="utf-8")
+    assert "JM regime probabilities" in html
+    assert 'value="jm"' in html            # third band-toggle option
+    assert "fig_jm_probs" in html
+
+
+def test_build_report_byte_identical_without_jm(
+    minimal_run_dir: Path, tiny_xlsx: Path, tmp_path: Path
+) -> None:
+    from roro.report import build_report  # noqa: PLC0415
+
+    a, b = tmp_path / "a.html", tmp_path / "b.html"
+    build_report(minimal_run_dir, tiny_xlsx, a, window=21)
+    build_report(minimal_run_dir, tiny_xlsx, b, window=21)
+    assert a.read_bytes() == b.read_bytes()  # determinism preserved (no JM present)

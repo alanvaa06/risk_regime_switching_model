@@ -52,6 +52,7 @@ def _band_toggle_markup(
   <select id="hmm-band-method" style="font-size:13px;margin-left:6px;">
     <option value="percentile">Percentile</option>
     <option value="hmm">HMM</option>
+    <option value="jm">Jump Model</option>
   </select>
 </div>
 <script>

@@ -631,7 +631,7 @@ def test_beta_band_lookup_has_both_methods_per_segment() -> None:
         pd.DataFrame({"global": [1.0] * len(idx), "DM": [1.0] * len(idx)}, index=idx),
     )
     lookup = beta_band_lookup(bundle)
-    assert set(lookup["global"].keys()) == {"percentile", "hmm"}
+    assert set(lookup["global"].keys()) == {"percentile", "hmm", "jm"}
     shp = lookup["global"]["hmm"][0]
     assert isinstance(shp["x0"], str)
     assert shp["type"] == "rect"

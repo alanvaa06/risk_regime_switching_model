@@ -682,13 +682,14 @@ def _band_shapes(labels: pd.Series, *, smooth: bool) -> list[dict[str, object]]:
 
 
 def beta_band_lookup(bundle: DataBundle) -> dict[str, dict[str, list[dict[str, object]]]]:
-    """Per-segment precomputed band shapes for both methods, keyed for the JS toggle.
+    """Per-segment precomputed band shapes for all methods, keyed for the JS toggle.
 
     Percentile = hysteresis-smoothed tercile runs (matches beta_timeseries).
     HMM = raw label runs (no smoothing — HMM is persistent by construction).
+    JM = raw label runs (no smoothing — JM is persistent by construction).
     Only segments present in seg_beta are included.
+    Caller must ensure at least one of seg_hmm_label or seg_jm_label is not None.
     """
-    assert bundle.seg_hmm_label is not None  # caller guards
     out: dict[str, dict[str, list[dict[str, object]]]] = {}
     for seg in BETA_TS_SEGMENTS:
         if seg not in bundle.seg_beta.columns:
@@ -697,9 +698,12 @@ def beta_band_lookup(bundle: DataBundle) -> dict[str, dict[str, list[dict[str, o
         if seg in bundle.seg_tercile.columns:
             percentile = _band_shapes(bundle.seg_tercile[seg], smooth=True)
         hmm: list[dict[str, object]] = []
-        if seg in bundle.seg_hmm_label.columns:
+        if bundle.seg_hmm_label is not None and seg in bundle.seg_hmm_label.columns:
             hmm = _band_shapes(bundle.seg_hmm_label[seg], smooth=False)
-        out[seg] = {"percentile": percentile, "hmm": hmm}
+        jm: list[dict[str, object]] = []
+        if bundle.seg_jm_label is not None and seg in bundle.seg_jm_label.columns:
+            jm = _band_shapes(bundle.seg_jm_label[seg], smooth=False)
+        out[seg] = {"percentile": percentile, "hmm": hmm, "jm": jm}
     return out
 
 
@@ -858,6 +862,12 @@ _PROB_TRACE_ORDER: tuple[tuple[str, str], ...] = (
     ("Risk-on", "seg_hmm_p_on"),
 )
 
+_PROB_TRACE_ORDER_JM: tuple[tuple[str, str], ...] = (
+    ("Risk-off", "seg_jm_p_off"),
+    ("Transitional", "seg_jm_p_tr"),
+    ("Risk-on", "seg_jm_p_on"),
+)
+
 
 def regime_probability_area(bundle: DataBundle) -> go.Figure:
     """Stacked filtered-probability area (3 probs → 1.0) per segment, HMM only.
@@ -938,6 +948,95 @@ def regime_probability_area(bundle: DataBundle) -> go.Figure:
                     "type": "dropdown",
                     "showactive": True,
                     "buttons": buttons,
+                    "x": 1.12,
+                    "y": 1.0,
+                    "xanchor": "left",
+                    "yanchor": "top",
+                }
+            ],
+        ),
+    )
+
+
+def regime_probability_area_jm(bundle: DataBundle) -> go.Figure:
+    """Stacked filtered-probability area (3 probs → 1.0) per segment, Jump Model only.
+
+    Assumes bundle.seg_jm_* are not None (caller guards on seg_jm_label).
+    """
+    assert bundle.seg_jm_label is not None  # caller guards
+    p_off = bundle.seg_jm_p_off
+    p_tr = bundle.seg_jm_p_tr
+    p_on = bundle.seg_jm_p_on
+    assert p_off is not None and p_tr is not None and p_on is not None
+    panels: dict[str, pd.DataFrame] = {
+        "seg_jm_p_off": p_off,
+        "seg_jm_p_tr": p_tr,
+        "seg_jm_p_on": p_on,
+    }
+
+    available = [s for s in BETA_TS_SEGMENTS if s in bundle.seg_jm_label.columns]
+    default = "global" if "global" in available else available[0]
+    x = p_off.index
+
+    traces: list[go.Scatter] = []
+    for label, attr in _PROB_TRACE_ORDER_JM:
+        traces.append(
+            go.Scatter(
+                x=x,
+                y=panels[attr][default].to_numpy(dtype=float),
+                mode="lines",
+                line={"width": 0.5, "color": REGIME_COLORS[label]},
+                fillcolor=REGIME_COLORS[label],
+                stackgroup="p",
+                name=label,
+                hovertemplate="%{x|%Y-%m-%d}<br>" + label + "=%{y:.2f}<extra></extra>",
+            )
+        )
+
+    buttons_jm: list[dict[str, object]] = []
+    for seg in available:
+        buttons_jm.append(
+            {
+                "method": "update",
+                "label": seg,
+                "args": [
+                    {
+                        "y": [
+                            panels[attr][seg].to_numpy(dtype=float)
+                            for _, attr in _PROB_TRACE_ORDER_JM
+                        ]
+                    },
+                    {"title": f"JM regime probabilities — {seg}"},
+                ],
+            }
+        )
+
+    return go.Figure(
+        data=traces,
+        layout=go.Layout(
+            title=f"JM regime probabilities — {default}",
+            height=700,
+            template="simple_white",
+            font={"family": "system-ui, -apple-system, sans-serif", "size": 13},
+            margin={"l": 60, "r": 200, "t": 60, "b": 120},
+            xaxis={
+                "title": "Date",
+                "showgrid": True,
+                "gridcolor": "#e6e6e6",
+                "zeroline": False,
+            },
+            yaxis={
+                "title": "Filtered P(state)",
+                "range": [0.0, 1.0],
+                "showgrid": True,
+                "gridcolor": "#e6e6e6",
+                "zeroline": False,
+            },
+            updatemenus=[
+                {
+                    "type": "dropdown",
+                    "showactive": True,
+                    "buttons": buttons_jm,
                     "x": 1.12,
                     "y": 1.0,
                     "xanchor": "left",

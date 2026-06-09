@@ -83,6 +83,32 @@ def write_hmm_csv(run_dir: Path) -> Path:
     return path
 
 
+def write_jm_csv(run_dir: Path) -> Path:
+    """Add a regimes_jm.csv to an existing run dir (segments match the minimal fixture)."""
+    dates = pd.bdate_range("2020-01-02", "2024-12-31")
+    rows = []
+    labels = ("Risk-off", "Transitional", "Risk-on")
+    for i, d in enumerate(dates):
+        for seg in ("global", "DM", "EM", "EM_Eq", "EM_FI"):
+            lab = labels[i % 3]
+            p = {"Risk-off": (0.7, 0.2, 0.1), "Transitional": (0.2, 0.6, 0.2),
+                 "Risk-on": (0.1, 0.2, 0.7)}[lab]
+            rows.append({
+                "date": d, "segment": seg, "state": labels.index(lab), "label": lab,
+                "p_risk_off": p[0], "p_transitional": p[1], "p_risk_on": p[2],
+                "confidence": max(p), "cold_start": False, "thin_cut": False,
+            })
+    path = run_dir / "regimes_jm.csv"
+    pd.DataFrame(rows).to_csv(path, index=False)
+    return path
+
+
+@pytest.fixture(name="write_jm_csv")
+def _write_jm_csv_fixture() -> Callable[[Path], Path]:
+    """Fixture that returns the write_jm_csv helper callable."""
+    return write_jm_csv
+
+
 @pytest.fixture
 def minimal_run_dir(tmp_path: Path, tiny_xlsx: Path) -> Path:
     """A minimal valid engine run dir backed by the tiny_xlsx fixture."""

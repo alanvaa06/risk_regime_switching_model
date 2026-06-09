@@ -7,6 +7,7 @@ from roro.report.figures import (
     beta_band_lookup,
     beta_timeseries,
     regime_probability_area,
+    regime_probability_area_jm,
     scatter_beta_return,
     scatter_vol_return,
     vol_breadth_heatmap,
@@ -49,6 +50,11 @@ def build_report(
         specs.append(FigureSpec(
             regime_probability_area(bundle), "fig_hmm_probs", "HMM regime probabilities"
         ))
+    if bundle.seg_jm_label is not None:
+        specs.append(FigureSpec(
+            regime_probability_area_jm(bundle), "fig_jm_probs", "JM regime probabilities"
+        ))
+    if bundle.seg_hmm_label is not None or bundle.seg_jm_label is not None:
         lookup = beta_band_lookup(bundle)
     specs.append(FigureSpec(
         vol_breadth_heatmap(bundle), "fig_vol_breadth",
