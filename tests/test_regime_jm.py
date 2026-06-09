@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
 import roro.regime_jm as _jm_mod
+from roro.config import EngineConfig
 from roro.jump_model import JumpFit
-from roro.regime_jm import walk_forward
+from roro.regime_jm import classify_jm, walk_forward
+from roro.types import BetaBySegment, BetaFrame, JmRegimeFrame
 
 
 def _two_regime_series(n: int = 600) -> pd.Series:
@@ -106,3 +109,24 @@ def test_walk_forward_last_good_fallback(monkeypatch) -> None:  # type: ignore[n
     active = out["label"].iloc[120:]
     assert (active != "Unknown").any()                      # last_good kept producing labels
     assert not active.isna().any()
+
+
+def _bbs(n: int = 400) -> BetaBySegment:
+    idx = pd.bdate_range("2015-01-01", periods=n)
+    rng = np.random.default_rng(2)
+    beta = np.concatenate([rng.normal(-2, 0.3, n // 2), rng.normal(2, 0.3, n - n // 2)])
+    cap = pd.DataFrame({"beta": beta, "n": np.full(n, 12)}, index=idx)
+    bf = BetaFrame(cap_wtd=cap, eq_wtd=pd.DataFrame(), slope_spread=pd.Series(dtype=float))
+    return BetaBySegment(by_segment={"global": bf, "LatAm": bf})
+
+
+def test_classify_jm_returns_frame() -> None:
+    cfg = EngineConfig(data_path=Path("d.xlsx"), output_dir=Path("o"),
+                       jm_min_history_days=120, jm_refit_interval_days=40, jm_n_init=4)
+    frame = classify_jm(_bbs(), cfg=cfg, thin_cuts=frozenset({"LatAm"}))
+    assert isinstance(frame, JmRegimeFrame)
+    assert "global" in frame.label.columns and "LatAm" in frame.label.columns
+    assert bool(frame.thin_cut_flag["LatAm"].all())
+    assert not bool(frame.thin_cut_flag["global"].any())
+    assert frame.label["global"].isin({"Risk-off", "Transitional", "Risk-on", "Unknown"}).all()
+    assert frame.jump_penalty_used["global"] == cfg.jm_jump_penalty

@@ -9,13 +9,15 @@ to FIT on a closed historical window -- never for the live signal.
 from __future__ import annotations
 
 import warnings
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
 
+from roro.config import EngineConfig
 from roro.jump_model import fit_jump_model, online_states
+from roro.types import BetaBySegment, JmRegimeFrame
 
 _ORDERED_LABELS = ("Risk-off", "Transitional", "Risk-on")
 _UNKNOWN = "Unknown"
@@ -110,3 +112,62 @@ def walk_forward(
         .astype(bool),
         "refit_dates": refit_dates,
     }
+
+
+def classify_jm(
+    bbs: BetaBySegment, *, cfg: EngineConfig, thin_cuts: frozenset[str]
+) -> JmRegimeFrame:
+    """Per-segment JM classification mirroring classify_hmm's loop + frame shape."""
+    state: dict[str, object] = {}
+    label: dict[str, object] = {}
+    p_off: dict[str, object] = {}
+    p_tr: dict[str, object] = {}
+    p_on: dict[str, object] = {}
+    conf: dict[str, object] = {}
+    nseg: dict[str, object] = {}
+    thin: dict[str, object] = {}
+    cold: dict[str, object] = {}
+    refit_dates: dict[str, list[pd.Timestamp]] = {}
+    penalty_used: dict[str, float] = {}
+
+    for cut, bf in bbs.by_segment.items():
+        beta = bf.cap_wtd["beta"]
+        out = walk_forward(
+            beta,
+            jump_penalty=cfg.jm_jump_penalty,
+            refit_interval_days=cfg.jm_refit_interval_days,
+            min_history_days=cfg.jm_min_history_days,
+            n_states=cfg.jm_n_states,
+            window=cfg.jm_window,
+            rolling_window_days=cfg.jm_rolling_window_days,
+            continuous=cfg.jm_continuous,
+            n_init=cfg.jm_n_init,
+            max_iter=cfg.jm_max_iter,
+            tol=cfg.jm_tol,
+            seed=cfg.jm_random_seed,
+        )
+        state[cut] = out["state"]
+        label[cut] = out["label"]
+        p_off[cut] = out["prob_risk_off"]
+        p_tr[cut] = out["prob_transitional"]
+        p_on[cut] = out["prob_risk_on"]
+        conf[cut] = out["confidence"]
+        nseg[cut] = bf.cap_wtd["n"].reindex(beta.index)
+        thin[cut] = pd.Series(cut in thin_cuts, index=beta.index)
+        cold[cut] = out["cold_start"]
+        refit_dates[cut] = cast(list[pd.Timestamp], out["refit_dates"])
+        penalty_used[cut] = cfg.jm_jump_penalty
+
+    return JmRegimeFrame(
+        state=pd.DataFrame(state),
+        label=pd.DataFrame(label),
+        prob_risk_off=pd.DataFrame(p_off),
+        prob_transitional=pd.DataFrame(p_tr),
+        prob_risk_on=pd.DataFrame(p_on),
+        confidence=pd.DataFrame(conf),
+        n_per_segment=pd.DataFrame(nseg),
+        thin_cut_flag=pd.DataFrame(thin),
+        cold_start_flag=pd.DataFrame(cold),
+        refit_dates=refit_dates,
+        jump_penalty_used=penalty_used,
+    )
