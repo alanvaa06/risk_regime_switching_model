@@ -1,0 +1,36 @@
+# RoRo evaluation configuration — reproduces the 2008-2026 HMM eval that
+# produced outputs/hmm_eval/. Used by `roro gate-diagnostics` to regenerate the
+# gate evidence base self-consistently (percentile + HMM) and pin the baseline.
+# Mirrors outputs/hmm_eval/2026-05-26/snapshot.json config_resolved.
+
+data_path: data.xlsx
+output_dir: outputs/gate_diag_run
+
+# Return + vol estimators
+ewma_halflife_days: 30
+return_window_days: 63
+tripwire_window_days: 21
+tripwire_ewma_halflife_days: 10
+
+# Classification
+percentile_window_years: 5
+bucket_scheme: TERCILE
+min_n_per_cut: 10
+direction_lookback_days: 5
+
+# External validation
+external_corr_window_days: 60
+external_corr_alert_threshold: 0.3
+
+# Bootstrap
+bootstrap_min_days: 252
+
+# HMM overlay (matches the recorded eval)
+hmm_enabled: true
+hmm_refit_interval_days: 63
+hmm_min_history_days: 252
+hmm_switching_variance: true
+hmm_window: expanding
+
+# Reproducibility
+methodology_version: 1.0.0
