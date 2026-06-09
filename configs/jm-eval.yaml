@@ -1,0 +1,43 @@
+# RoRo JM-deliverable configuration: percentile + HMM + JM (continuous) all on,
+# so the report renders the 3-way regime band toggle (Percentile / HMM / JM) and
+# both the HMM and JM state-probability figures. Mirrors configs/eval.yaml + JM.
+
+data_path: data.xlsx
+output_dir: outputs/jm_run
+
+# Return + vol estimators
+ewma_halflife_days: 30
+return_window_days: 63
+tripwire_window_days: 21
+tripwire_ewma_halflife_days: 10
+
+# Classification
+percentile_window_years: 5
+bucket_scheme: TERCILE
+min_n_per_cut: 10
+direction_lookback_days: 5
+
+# External validation
+external_corr_window_days: 60
+external_corr_alert_threshold: 0.3
+
+# Bootstrap
+bootstrap_min_days: 252
+
+# HMM overlay
+hmm_enabled: true
+hmm_refit_interval_days: 63
+hmm_min_history_days: 252
+hmm_switching_variance: true
+hmm_window: expanding
+
+# Statistical Jump Model overlay (continuous -> soft probability figure)
+jm_enabled: true
+jm_continuous: true
+jm_jump_penalty: 50.0
+jm_refit_interval_days: 63
+jm_min_history_days: 252
+jm_window: expanding
+
+# Reproducibility
+methodology_version: 1.0.0

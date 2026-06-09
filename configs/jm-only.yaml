@@ -1,0 +1,32 @@
+# Fast JM-only deliverable config: percentile + JM (continuous), HMM OFF.
+# Produces regimes.csv (tercile) + regimes_jm.csv quickly (no slow HMM EM refits),
+# so the report renders the JM regime bands + JM state-probability figure on real data.
+
+data_path: data.xlsx
+output_dir: outputs/jm_only
+
+ewma_halflife_days: 30
+return_window_days: 63
+tripwire_window_days: 21
+tripwire_ewma_halflife_days: 10
+
+percentile_window_years: 5
+bucket_scheme: TERCILE
+min_n_per_cut: 10
+direction_lookback_days: 5
+
+external_corr_window_days: 60
+external_corr_alert_threshold: 0.3
+
+bootstrap_min_days: 252
+
+hmm_enabled: false
+
+jm_enabled: true
+jm_continuous: true
+jm_jump_penalty: 50.0
+jm_refit_interval_days: 63
+jm_min_history_days: 252
+jm_window: expanding
+
+methodology_version: 1.0.0
