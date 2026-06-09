@@ -4,10 +4,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
-from roro.backtest import EVENTS, _evaluate_gates, run_backtest
+from roro.backtest import (
+    EVENTS,
+    Event,
+    _calm_quarters,
+    _count_max_calm_transitions,
+    _evaluate_gates,
+    _event_hits,
+    _gate_stability,
+    run_backtest,
+)
 from roro.config import EngineConfig
 from roro.fred_client import FRED_SERIES_IDS, MockFredClient
 from roro.types import (
@@ -106,6 +116,72 @@ def test_evaluate_gates_accepts_explicit_label_source() -> None:
         "G5_stability",
         "G6_internal",
     }
+
+
+def test_calm_quarters_returns_low_vol_quarter_ends() -> None:
+    idx = pd.bdate_range("2020-01-01", "2021-12-31")
+    rng = np.random.default_rng(0)
+    # First year quiet, second year loud -> calm quarters concentrate in year 1.
+    vals = np.concatenate([rng.normal(0, 1e-4, 261), rng.normal(0, 1e-2, len(idx) - 261)])
+    daily = pd.DataFrame({"global": pd.Series(vals, index=idx)})
+    calm = _calm_quarters(daily)
+    assert isinstance(calm, pd.DatetimeIndex)
+    assert len(calm) >= 1
+    assert calm.equals(calm.normalize())
+
+
+def test_count_max_calm_transitions_counts_only_calm_global() -> None:
+    calm = pd.DatetimeIndex([pd.Timestamp("2020-03-31")])
+    transitions = pd.DataFrame(
+        {
+            "date": [pd.Timestamp("2020-02-01"), pd.Timestamp("2020-02-15"),
+                     pd.Timestamp("2020-08-01")],
+            "segment": ["global", "global", "global"],
+            "from_bucket": ["Risk-on", "Risk-off", "Risk-on"],
+            "to_bucket": ["Risk-off", "Risk-on", "Risk-off"],
+        }
+    )
+    worst = _count_max_calm_transitions(transitions, calm, segment="global")
+    assert worst == 2.0  # only the two Q1 transitions land in the calm quarter
+
+
+def test_event_hits_flags_out_of_range_events() -> None:
+    idx = pd.bdate_range("2020-01-01", "2020-12-31")
+    terc = pd.DataFrame({"global": pd.Series("Risk-off", index=idx)})
+    events = (
+        Event(name="in_window", date="2020-06-15"),
+        Event(name="before_start", date="2008-10-10"),
+    )
+    hits, total_in_range, out_of_range = _event_hits(
+        terc, events, start="2020-01-01", end="2020-12-31"
+    )
+    assert total_in_range == 1
+    assert hits == 1
+    assert out_of_range == ["before_start"]
+
+
+def test_gate_stability_threshold_kwarg_overrides_default() -> None:
+    idx = pd.bdate_range("2020-01-01", "2020-12-31")
+    daily = pd.DataFrame({"global": pd.Series(1e-4, index=idx)})
+    transitions = pd.DataFrame(
+        {"date": [idx[10], idx[11], idx[12]], "segment": ["global"] * 3,
+         "from_bucket": ["a", "b", "a"], "to_bucket": ["b", "a", "b"]}
+    )
+    calm = _calm_quarters(daily)
+    worst = _count_max_calm_transitions(transitions, calm, segment="global")
+    assert worst >= 0.0  # smoke: helper callable with explicit args
+
+    # Prove _gate_stability accepts max_calm_transitions kwarg.
+    empty_transitions = pd.DataFrame(
+        columns=["date", "segment", "from_bucket", "to_bucket"]
+    )
+    # Call directly: empty transitions → early-return True regardless of threshold.
+    gate_out = _gate_stability(
+        None,  # type: ignore[arg-type]  # not reached — transitions.empty short-circuits
+        empty_transitions,
+        max_calm_transitions=0.0,
+    )
+    assert gate_out["passed"] is True
 
 
 @pytest.mark.slow

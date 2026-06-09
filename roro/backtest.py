@@ -198,7 +198,80 @@ def _gate_events(terc: pd.DataFrame) -> dict[str, Any]:
     }
 
 
-def _gate_segmentation_lift(terc: pd.DataFrame) -> dict[str, Any]:
+def _calm_quarters(daily_log_returns: pd.DataFrame) -> pd.DatetimeIndex:
+    """Quarter-end timestamps whose mean realized vol is below the median quarter."""
+    if daily_log_returns.empty:
+        return pd.DatetimeIndex([])
+    proxy = daily_log_returns.iloc[:, 0].dropna()
+    if proxy.empty:
+        return pd.DatetimeIndex([])
+    realized = proxy.rolling(_REALIZED_VOL_WINDOW).std() * np.sqrt(_TRADING_DAYS_PER_YEAR)
+    by_quarter_vol = realized.groupby(pd.Grouper(freq="QE")).mean().dropna()
+    if by_quarter_vol.empty:
+        return pd.DatetimeIndex([])
+    median_vol = by_quarter_vol.median()
+    calm = by_quarter_vol[by_quarter_vol < median_vol].index
+    return pd.DatetimeIndex(calm).normalize()
+
+
+def _count_max_calm_transitions(
+    transitions: pd.DataFrame,
+    calm_quarters: pd.DatetimeIndex,
+    *,
+    segment: str = "global",
+) -> float:
+    """Worst per-calm-quarter transition count for one segment."""
+    if transitions.empty or len(calm_quarters) == 0:
+        return 0.0
+    t = transitions.copy()
+    t["quarter"] = (
+        pd.PeriodIndex(t["date"], freq="Q").to_timestamp(how="end").normalize()
+    )
+    seg = t[t["segment"] == segment]
+    by_quarter = seg.groupby("quarter").size()
+    counts = by_quarter.reindex(calm_quarters, fill_value=0)
+    return float(counts.max()) if len(counts) else 0.0
+
+
+def _event_hits(
+    labels: pd.DataFrame,
+    events: tuple[Event, ...],
+    *,
+    start: str,
+    end: str,
+) -> tuple[int, int, list[str]]:
+    """Count event-window hits; report which events fall outside [start, end].
+
+    An event is *in range* only if its +/-window overlaps [start, end]. Out-of-range
+    events are returned by name (they can never match -> scorecard artifact, not a
+    classifier miss).
+    """
+    start_ts, end_ts = pd.Timestamp(start), pd.Timestamp(end)
+    hits = 0
+    in_range = 0
+    out_of_range: list[str] = []
+    for event in events:
+        ts = pd.Timestamp(event.date)
+        w_start = ts - pd.Timedelta(days=_EVENT_WINDOW_DAYS)
+        w_end = ts + pd.Timedelta(days=_EVENT_WINDOW_DAYS)
+        if w_end < start_ts or w_start > end_ts:
+            out_of_range.append(event.name)
+            continue
+        in_range += 1
+        local = labels.loc[(labels.index >= w_start) & (labels.index <= w_end)]
+        for seg in event.segments:
+            if seg in local.columns and local[seg].isin(event.expected_buckets).any():
+                hits += 1
+                break
+    return hits, in_range, out_of_range
+
+
+def _gate_segmentation_lift(
+    terc: pd.DataFrame,
+    *,
+    seg_gap_min: int = _G4_SEG_GAP_MIN,
+    fraction_min: float = _G4_SEG_FRACTION_MIN,
+) -> dict[str, Any]:
     if not {"DM_Eq", "EM_Eq"}.issubset(terc.columns):
         return {"passed": False, "reason": "missing DM_Eq/EM_Eq"}
     a = terc["DM_Eq"].map(_TERCILE_ORDINAL).astype(float)
@@ -206,36 +279,27 @@ def _gate_segmentation_lift(terc: pd.DataFrame) -> dict[str, Any]:
     diff = (a - b).abs().dropna()
     if diff.empty:
         return {"passed": False, "fraction_with_gap_ge_2": 0.0}
-    fraction = float((diff >= _G4_SEG_GAP_MIN).mean())
-    return {"passed": bool(fraction >= _G4_SEG_FRACTION_MIN), "fraction_with_gap_ge_2": fraction}
+    fraction = float((diff >= seg_gap_min).mean())
+    return {"passed": bool(fraction >= fraction_min), "fraction_with_gap_ge_2": fraction}
 
 
-def _gate_stability(result: RunResult, transitions: pd.DataFrame) -> dict[str, Any]:
+def _gate_stability(
+    result: RunResult,
+    transitions: pd.DataFrame,
+    *,
+    max_calm_transitions: float = _G5_MAX_CALM_TRANSITIONS,
+) -> dict[str, Any]:
     if transitions.empty:
         return {"passed": True, "max_transitions_in_calm_quarter": 0.0}
     daily = result.returns.daily_log_returns
     if daily.empty:
         return {"passed": False, "reason": "missing returns"}
-    proxy = daily.iloc[:, 0].dropna()
-    if proxy.empty:
+    calm_quarters = _calm_quarters(daily)
+    if len(calm_quarters) == 0:
         return {"passed": True, "max_transitions_in_calm_quarter": 0.0}
-    realized = proxy.rolling(_REALIZED_VOL_WINDOW).std() * np.sqrt(_TRADING_DAYS_PER_YEAR)
-    by_quarter_vol = realized.groupby(pd.Grouper(freq="QE")).mean().dropna()
-    if by_quarter_vol.empty:
-        return {"passed": True, "max_transitions_in_calm_quarter": 0.0}
-    median_vol = by_quarter_vol.median()
-    calm_quarters = by_quarter_vol[by_quarter_vol < median_vol].index
-    transitions = transitions.copy()
-    transitions["quarter"] = (
-        pd.PeriodIndex(transitions["date"], freq="Q").to_timestamp(how="end").normalize()
-    )
-    calm_index = pd.DatetimeIndex(calm_quarters).normalize()
-    global_transitions = transitions[transitions["segment"] == "global"]
-    by_quarter = global_transitions.groupby("quarter").size()
-    calm_counts = by_quarter.reindex(calm_index, fill_value=0)
-    worst = float(calm_counts.max()) if len(calm_counts) else 0.0
+    worst = _count_max_calm_transitions(transitions, calm_quarters, segment="global")
     return {
-        "passed": bool(worst <= _G5_MAX_CALM_TRANSITIONS),
+        "passed": bool(worst <= max_calm_transitions),
         "max_transitions_in_calm_quarter": worst,
     }
 
