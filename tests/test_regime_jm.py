@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -10,6 +11,8 @@ import pandas as pd
 
 import roro.regime_jm as _jm_mod
 from roro.config import EngineConfig
+from roro.engine import run as engine_run
+from roro.fred_client import FRED_SERIES_IDS, MockFredClient
 from roro.jump_model import JumpFit
 from roro.regime_jm import classify_jm, walk_forward
 from roro.types import BetaBySegment, BetaFrame, JmRegimeFrame
@@ -130,3 +133,33 @@ def test_classify_jm_returns_frame() -> None:
     assert not bool(frame.thin_cut_flag["global"].any())
     assert frame.label["global"].isin({"Risk-off", "Transitional", "Risk-on", "Unknown"}).all()
     assert frame.jump_penalty_used["global"] == cfg.jm_jump_penalty
+
+
+def test_engine_jm_byte_identical_and_artifacts(tiny_xlsx: Path, tmp_path: Path) -> None:
+    idx = pd.bdate_range("2019-01-01", "2024-12-31")
+    seeded = {sid: pd.Series(20.0, index=idx) for sid in FRED_SERIES_IDS}
+
+    def _run(out: str) -> bytes:
+        cfg = EngineConfig(
+            data_path=tiny_xlsx, output_dir=tmp_path / out, ewma_halflife_days=10,
+            return_window_days=21, tripwire_window_days=10, percentile_window_years=1,
+            min_n_per_cut=2, bootstrap_min_days=10, jm_enabled=True,
+            jm_min_history_days=120, jm_refit_interval_days=60, jm_n_init=4,
+        )
+        engine_run(cfg, fred_client=MockFredClient(seeded=seeded),
+                   run_date="2024-12-31", as_of_data_date="2024-12-31", force=True)
+        return (tmp_path / out / "2024-12-31" / "regimes_jm.csv").read_bytes()
+
+    a = _run("a")
+    b = _run("b")
+    assert a == b  # AJ-2: byte-identical regimes_jm.csv across runs
+
+    run_dir = tmp_path / "a" / "2024-12-31"
+    assert (run_dir / "jm_refit_log.csv").exists()                  # refit log written
+    snap = json.loads((run_dir / "snapshot.json").read_text(encoding="utf-8"))
+    assert "regime_jm" in snap                                      # snapshot block present
+    assert "global" in snap["regime_jm"]
+    assert "label" in snap["regime_jm"]["global"]
+    cfg_resolved = snap["config_resolved"]
+    assert cfg_resolved["jm_enabled"] is True                       # jm_* captured in snapshot
+    assert "jm_jump_penalty" in cfg_resolved

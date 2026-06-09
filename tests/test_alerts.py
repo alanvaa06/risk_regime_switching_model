@@ -1,7 +1,7 @@
 import pandas as pd
 
 from roro.alerts import detect_alerts
-from roro.types import CorrelationFrame, HmmRegimeFrame, RegimeFrame, ValidationFrame
+from roro.types import CorrelationFrame, HmmRegimeFrame, JmRegimeFrame, RegimeFrame, ValidationFrame
 
 
 def _regime() -> RegimeFrame:
@@ -58,3 +58,23 @@ def test_detect_alerts_emits_hmm_transitions() -> None:
                          correlation_alerts=empty)
     out = detect_alerts(regime=rf, correlation=cf, validation=vf, regime_hmm=hmm)
     assert (out.hmm_bucket_transitions["to_bucket"] == "Risk-on").any()
+
+
+def test_detect_alerts_emits_jm_transitions() -> None:
+    idx = pd.bdate_range("2014-01-01", periods=3)
+    empty = pd.DataFrame(index=idx)
+    rf = RegimeFrame(percentile_5y=empty, tercile=empty, quintile=empty,
+                     direction=empty, n_per_segment=empty, thin_cut_flag=empty,
+                     bootstrap_flag=empty)
+    labels = pd.DataFrame({"global": ["Risk-off", "Risk-off", "Risk-on"]}, index=idx)
+    jm = JmRegimeFrame(state=labels, label=labels, prob_risk_off=empty,
+                       prob_transitional=empty, prob_risk_on=empty, confidence=empty,
+                       n_per_segment=empty, thin_cut_flag=empty, cold_start_flag=empty)
+    cf = CorrelationFrame(avg_pairwise_3m=empty, pc1_variance_share=empty)
+    vf = ValidationFrame(rolling_corr_60d=empty, internal_consistency=empty,
+                         correlation_alerts=empty)
+    out = detect_alerts(regime=rf, correlation=cf, validation=vf, regime_jm=jm)
+    trans = out.jm_bucket_transitions
+    assert not trans.empty
+    assert {"date", "segment", "from_bucket", "to_bucket"}.issubset(trans.columns)
+    assert (trans["to_bucket"] == "Risk-on").any()
