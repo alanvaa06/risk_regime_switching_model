@@ -17,6 +17,7 @@ from roro.report.figures import (
     beta_band_lookup,
     beta_timeseries,
     regime_probability_area,
+    regime_probability_area_jm,
     scatter_beta_return,
     scatter_vol_return,
     vol_breadth_heatmap,
@@ -576,6 +577,33 @@ def test_regime_probability_area_three_stacked_traces() -> None:
     assert fig.layout.yaxis.range == (0.0, 1.0) or list(fig.layout.yaxis.range) == [0.0, 1.0]
 
 
+def _bundle_with_jm() -> DataBundle:
+    idx = pd.bdate_range("2020-01-02", periods=10)
+    label = pd.DataFrame({"global": ["Risk-on"] * 10, "DM": ["Risk-off"] * 10}, index=idx)
+    p_off = pd.DataFrame({"global": [0.1] * 10, "DM": [0.7] * 10}, index=idx)
+    p_tr = pd.DataFrame({"global": [0.2] * 10, "DM": [0.2] * 10}, index=idx)
+    p_on = pd.DataFrame({"global": [0.7] * 10, "DM": [0.1] * 10}, index=idx)
+    empty = pd.DataFrame(index=idx)
+    return DataBundle(
+        run_date=idx[-1], methodology_version="1.0.0", dates=pd.DatetimeIndex(idx),
+        vol=empty, ret_3m=empty, beta_vs_global=empty, meta=pd.DataFrame(),
+        seg_beta=empty, seg_tercile=empty,
+        seg_jm_label=label, seg_jm_p_off=p_off, seg_jm_p_tr=p_tr, seg_jm_p_on=p_on,
+    )
+
+
+def test_regime_probability_area_jm_three_stacked_traces() -> None:
+    fig = regime_probability_area_jm(_bundle_with_jm())
+    assert len(fig.data) == 3
+    assert all(getattr(tr, "stackgroup", None) for tr in fig.data)
+    ysum = sum(float(tr.y[0]) for tr in fig.data)
+    assert abs(ysum - 1.0) < 1e-9
+    menus = fig.layout.updatemenus
+    assert len(menus) == 1
+    assert len(menus[0].buttons) == 2
+    assert fig.layout.yaxis.range == (0.0, 1.0) or list(fig.layout.yaxis.range) == [0.0, 1.0]
+
+
 def test_beta_timeseries_smoothing_reduces_rect_count() -> None:
     """Hysteresis smoothing collapses sliver runs into broad blocks.
 
@@ -619,8 +647,9 @@ def test_beta_timeseries_smoothing_reduces_rect_count() -> None:
     assert rect_count < raw_run_count
 
 
-def test_beta_band_lookup_has_both_methods_per_segment() -> None:
+def test_beta_band_lookup_has_all_three_methods_per_segment() -> None:
     bundle = _bundle_with_hmm()
+    assert bundle.seg_hmm_label is not None
     idx = bundle.seg_hmm_label.index
     object.__setattr__(
         bundle, "seg_tercile",

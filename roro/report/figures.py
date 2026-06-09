@@ -688,7 +688,8 @@ def beta_band_lookup(bundle: DataBundle) -> dict[str, dict[str, list[dict[str, o
     HMM = raw label runs (no smoothing — HMM is persistent by construction).
     JM = raw label runs (no smoothing — JM is persistent by construction).
     Only segments present in seg_beta are included.
-    Caller must ensure at least one of seg_hmm_label or seg_jm_label is not None.
+    Called by orchestrate only when at least one of seg_hmm_label / seg_jm_label is
+    present; safe to call with neither (percentile-only -> hmm/jm shape lists are empty).
     """
     out: dict[str, dict[str, list[dict[str, object]]]] = {}
     for seg in BETA_TS_SEGMENTS:
