@@ -94,6 +94,48 @@ def cmd_backtest(config_path: Path, start: str, end: str, assert_gates: bool) ->
     click.echo("OK")
 
 
+@main.command("gate-diagnostics")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, path_type=Path),
+    required=True,
+)
+@click.option("--start", required=True)
+@click.option("--end", required=True)
+@click.option(
+    "--baseline",
+    "baseline_path",
+    type=click.Path(exists=True, path_type=Path),
+    default=None,
+    help="acceptance_compare.json to pin the baseline against.",
+)
+@click.option("--out", "out_dir", type=click.Path(path_type=Path), default=None)
+@click.option("--fred-key", default=None, help="Defaults to FRED_API_KEY env.")
+def cmd_gate_diagnostics(
+    config_path: Path,
+    start: str,
+    end: str,
+    baseline_path: Path | None,
+    out_dir: Path | None,
+    fred_key: str | None,
+) -> None:
+    """Read-only diagnostic over the S9 acceptance gates."""
+    # Lazy imports: engine + diagnostics pull heavy deps.
+    from roro.gate_diagnostics import diagnose, write_diagnostics  # noqa: PLC0415
+
+    cfg = load_config(config_path)
+    api_key = fred_key or os.environ.get("FRED_API_KEY", "")
+    client = _build_fred_client(api_key)
+    # Re-run the engine for a fresh causal RunResult (returns are not persisted).
+    result = engine_run(cfg, fred_client=client, run_date=end,
+                        as_of_data_date=end, force=True)
+    diag = diagnose(result, start=start, end=end, baseline_compare_path=baseline_path)
+    target = out_dir or (cfg.output_dir / "gate_diagnostics")
+    write_diagnostics(target, diag)
+    click.echo(f"OK: {target}")
+
+
 @main.command("report")
 @click.option(
     "--run-dir",
