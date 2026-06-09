@@ -27,3 +27,9 @@ Spec: `docs/superpowers/specs/2026-06-03-roro-hmm-regime-design.md`
 - Built + verified end-to-end (24 commits). Default `hmm_enabled=False` (overlay).
 - §8 decision: **percentile stays production default** — HMM passed no gate on real data, regressed G3 (events 6/8 vs 7/8), but halved G5 flicker (9 vs 18). Evidence: `outputs/hmm_eval/acceptance_compare.json`.
 - Follow-up: percentile baseline also fails 5/6 gates on 2008–2026 — gate/param calibration gap to revisit.
+
+## Gate-Diagnostics (2026-06-09) — DONE
+- [x] Harness built (Tasks 1–6): roro/gate_diagnostics.py + `roro gate-diagnostics` CLI subcommand. 188 tests green.
+- [x] Task 7: harness run, memo written. Only G5 is a real discriminating failure. Memo: docs/analysis/2026-06-09-gate-diagnostics-memo.md.
+- [ ] Follow-up: **Gate recalibration spec** — tier G1/G2/G6 as pipeline-health; fix G3 (drop out-of-range 2008 event); re-set G4/G5 thresholds off a calibration split; possibly adopt frontier-Pareto as G5 bar.
+- [ ] **JM core (jump_model.py) — in progress** (feat/jump-model branch, JM-PRD.md). Runs against recalibrated scorecard.
