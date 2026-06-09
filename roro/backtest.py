@@ -104,6 +104,23 @@ def run_backtest(
         json.dumps(report, indent=2, default=str), encoding="utf-8"
     )
 
+    jm_gates: dict[str, dict[str, Any]] | None = None
+    if result.regime_jm is not None:
+        jm_gates = _evaluate_gates(
+            result,
+            labels=result.regime_jm.label,
+            transitions=result.alerts.jm_bucket_transitions,
+        )
+        jm_report = {
+            **report,
+            "method": "jm",
+            "gates": jm_gates,
+            "all_passed": all(bool(v.get("passed", False)) for v in jm_gates.values()),
+        }
+        (cfg.output_dir / "acceptance_report_jm.json").write_text(
+            json.dumps(jm_report, indent=2, default=str), encoding="utf-8"
+        )
+
     if result.regime_hmm is not None:
         hmm_gates = _evaluate_gates(
             result,
@@ -119,7 +136,14 @@ def run_backtest(
         (cfg.output_dir / "acceptance_report_hmm.json").write_text(
             json.dumps(hmm_report, indent=2, default=str), encoding="utf-8"
         )
-        compare = {g: {"percentile": gates[g], "hmm": hmm_gates[g]} for g in gates}
+        compare = {
+            g: {
+                "percentile": gates[g],
+                "hmm": hmm_gates[g],
+                **({"jm": jm_gates[g]} if jm_gates is not None else {}),
+            }
+            for g in gates
+        }
         (cfg.output_dir / "acceptance_compare.json").write_text(
             json.dumps(compare, indent=2, default=str), encoding="utf-8"
         )

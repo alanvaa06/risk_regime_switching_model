@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -230,3 +231,23 @@ def test_run_backtest_writes_hmm_compare_reports(tiny_xlsx: Path, tmp_path: Path
     assert (tmp_path / "bt" / "acceptance_report.json").exists()
     assert (tmp_path / "bt" / "acceptance_report_hmm.json").exists()
     assert (tmp_path / "bt" / "acceptance_compare.json").exists()
+
+
+@pytest.mark.slow
+def test_run_backtest_writes_jm_compare(tiny_xlsx: Path, tmp_path: Path) -> None:
+    idx = pd.bdate_range("2019-01-01", "2024-12-31")
+    seeded = {sid: pd.Series(20.0, index=idx) for sid in FRED_SERIES_IDS}
+    cfg = EngineConfig(
+        data_path=tiny_xlsx, output_dir=tmp_path / "bt", ewma_halflife_days=10,
+        return_window_days=21, tripwire_window_days=10, percentile_window_years=1,
+        min_n_per_cut=2, bootstrap_min_days=10, hmm_enabled=True, jm_enabled=True,
+        hmm_min_history_days=120, hmm_refit_interval_days=60,
+        jm_min_history_days=120, jm_refit_interval_days=60, jm_n_init=4,
+    )
+    run_backtest(cfg, fred_client=MockFredClient(seeded=seeded),
+                 start="2024-01-01", end="2024-12-31")
+    assert (tmp_path / "bt" / "acceptance_report_jm.json").exists()
+    compare = json.loads((tmp_path / "bt" / "acceptance_compare.json").read_text(encoding="utf-8"))
+    assert "jm" in compare["G3_events"]
+    assert "hmm" in compare["G3_events"]
+    assert "percentile" in compare["G3_events"]
