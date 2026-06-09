@@ -8,10 +8,12 @@ import pandas as pd
 from roro.backtest import Event
 from roro.gate_diagnostics import (
     classify_gate,
+    g3_g5_frontier,
     repair_g3,
     sweep_external_corr,
     sweep_segmentation_lift,
 )
+from roro.report.figures import _smooth_regime_hysteresis
 
 
 def test_sweep_external_corr_is_monotone_nonincreasing() -> None:
@@ -77,3 +79,50 @@ def test_repair_g3_excludes_out_of_range_and_grades() -> None:
     assert out["hits"] == 2
     assert out["graded"] == 1.0  # 2/2 in-range events caught
     assert out["passed_in_range"] is True
+
+
+# ---------------------------------------------------------------------------
+# Task 4 – causal G3↔G5 sensitivity-stability frontier
+# ---------------------------------------------------------------------------
+
+
+def _flippy_labels(idx: pd.DatetimeIndex) -> pd.Series:
+    # Alternate Risk-on/Risk-off every other day -> maximal flicker at n=0.
+    vals = ["Risk-on" if i % 2 == 0 else "Risk-off" for i in range(len(idx))]
+    return pd.Series(vals, index=idx)
+
+
+def test_frontier_stability_is_monotone_nonincreasing_in_confirm_days() -> None:
+    idx = pd.bdate_range("2020-01-01", "2021-12-31")
+    terc = pd.DataFrame({"global": _flippy_labels(idx)})
+    daily = pd.DataFrame({"global": pd.Series(1e-4, index=idx)})
+    events = (Event(name="mid", date="2020-06-15"),)
+    fr = g3_g5_frontier(
+        terc, daily, events=events, start="2020-01-01", end="2021-12-31",
+        confirm_grid=[0, 2, 5, 10, 21],
+    )
+    trans = fr["max_calm_transitions"].to_numpy()
+    assert (np.diff(trans) <= 1e-9).all()  # more persistence -> never more flicker
+    assert fr.iloc[0]["max_calm_transitions"] >= fr.iloc[-1]["max_calm_transitions"]
+
+
+def test_frontier_is_deterministic() -> None:
+    idx = pd.bdate_range("2020-01-01", "2020-12-31")
+    terc = pd.DataFrame({"global": _flippy_labels(idx)})
+    daily = pd.DataFrame({"global": pd.Series(1e-4, index=idx)})
+    events = (Event(name="mid", date="2020-06-15"),)
+    a = g3_g5_frontier(terc, daily, events=events, start="2020-01-01",
+                       end="2020-12-31", confirm_grid=[0, 3, 7])
+    b = g3_g5_frontier(terc, daily, events=events, start="2020-01-01",
+                       end="2020-12-31", confirm_grid=[0, 3, 7])
+    pd.testing.assert_frame_equal(a, b)
+
+
+def test_frontier_no_lookahead_prefix_stable() -> None:
+    # A frontier row computed on a prefix must match the same row when future
+    # data is appended, because the smoother is causal.
+    idx = pd.bdate_range("2020-01-01", "2020-12-31")
+    full = pd.DataFrame({"global": _flippy_labels(idx)})
+    sm_full = _smooth_regime_hysteresis(full["global"], 5)
+    sm_prefix = _smooth_regime_hysteresis(full["global"].iloc[:100], 5)
+    pd.testing.assert_series_equal(sm_full.iloc[:100], sm_prefix)

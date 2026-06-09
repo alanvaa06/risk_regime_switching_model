@@ -12,7 +12,15 @@ from typing import Any
 
 import pandas as pd
 
-from roro.backtest import _TERCILE_ORDINAL, Event, _event_hits
+from roro.alerts import _bucket_transitions
+from roro.backtest import (
+    _TERCILE_ORDINAL,
+    Event,
+    _calm_quarters,
+    _count_max_calm_transitions,
+    _event_hits,
+)
+from roro.report.figures import _smooth_regime_hysteresis
 
 _SHARED_EPS = 1e-9
 _BORDERLINE_REL = 0.15
@@ -100,3 +108,38 @@ def repair_g3(
         "graded": graded,
         "passed_in_range": bool(total_in_range > 0 and hits == total_in_range),
     }
+
+
+def g3_g5_frontier(
+    terc: pd.DataFrame,
+    daily_log_returns: pd.DataFrame,
+    *,
+    events: tuple[Event, ...],
+    start: str,
+    end: str,
+    confirm_grid: list[int],
+    segment: str = "global",
+) -> pd.DataFrame:
+    """Trace (events caught, worst calm-quarter transitions) vs confirm-days.
+
+    n == 0 is the raw (unsmoothed) percentile labels; n > 0 applies the causal
+    hysteresis smoother. Transition counting and calm-quarter detection reuse
+    production primitives verbatim.
+    """
+    labels = terc[segment]
+    calm = _calm_quarters(daily_log_returns)
+    rows: list[dict[str, float]] = []
+    for n in confirm_grid:
+        smoothed = labels if n == 0 else _smooth_regime_hysteresis(labels, n)
+        smoothed_df = smoothed.to_frame(name=segment)
+        transitions = _bucket_transitions(smoothed_df)
+        worst = _count_max_calm_transitions(transitions, calm, segment=segment)
+        hits, _total, _oor = _event_hits(smoothed_df, events, start=start, end=end)
+        rows.append(
+            {
+                "confirm_days": int(n),
+                "events_caught": int(hits),
+                "max_calm_transitions": worst,
+            }
+        )
+    return pd.DataFrame(rows)
