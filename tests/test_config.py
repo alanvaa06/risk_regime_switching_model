@@ -59,3 +59,16 @@ def test_hmm_defaults_are_off() -> None:
     assert cfg.hmm_min_history_days == 252
     assert cfg.hmm_switching_variance is True
     assert cfg.hmm_window == "expanding"
+
+
+def test_jm_config_defaults_and_roundtrip() -> None:
+    cfg = EngineConfig(data_path=Path("d.xlsx"), output_dir=Path("o"))
+    assert cfg.jm_enabled is False
+    assert cfg.jm_jump_penalty == 50.0
+    assert cfg.jm_n_states == 3
+    assert cfg.jm_window == "expanding"
+    d = cfg.to_dict()
+    for key in ("jm_enabled", "jm_jump_penalty", "jm_refit_interval_days",
+                "jm_min_history_days", "jm_window", "jm_rolling_window_days",
+                "jm_continuous", "jm_n_init", "jm_max_iter", "jm_tol", "jm_random_seed"):
+        assert key in d

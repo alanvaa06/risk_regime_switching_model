@@ -81,6 +81,21 @@ class HmmRegimeFrame:
 
 
 @dataclass(frozen=True)
+class JmRegimeFrame:
+    state: pd.DataFrame
+    label: pd.DataFrame
+    prob_risk_off: pd.DataFrame
+    prob_transitional: pd.DataFrame
+    prob_risk_on: pd.DataFrame
+    confidence: pd.DataFrame
+    n_per_segment: pd.DataFrame
+    thin_cut_flag: pd.DataFrame
+    cold_start_flag: pd.DataFrame
+    refit_dates: dict[str, list[pd.Timestamp]] = field(default_factory=dict)
+    jump_penalty_used: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class CorrelationFrame:
     avg_pairwise_3m: pd.DataFrame
     pc1_variance_share: pd.DataFrame
@@ -103,6 +118,11 @@ class AlertSet:
             columns=["date", "segment", "from_bucket", "to_bucket"]
         )
     )
+    jm_bucket_transitions: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(
+            columns=["date", "segment", "from_bucket", "to_bucket"]
+        )
+    )
 
 
 @dataclass(frozen=True)
@@ -118,6 +138,7 @@ class RunResult:
     tripwire: BetaBySegment
     alerts: AlertSet
     regime_hmm: HmmRegimeFrame | None = None
+    regime_jm: JmRegimeFrame | None = None
     warnings: list[str] = field(default_factory=list)
     data_fingerprint: dict[str, str] = field(default_factory=dict)
     code_version: dict[str, str] = field(default_factory=dict)

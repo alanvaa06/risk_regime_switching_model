@@ -37,7 +37,24 @@ class EngineConfig:
     hmm_min_history_days: int = 252
     hmm_switching_variance: bool = True
     hmm_window: str = "expanding"
+    # Statistical Jump Model overlay (parallel method, off by default).
+    jm_enabled: bool = False
+    jm_jump_penalty: float = 50.0
+    jm_n_states: int = 3
+    jm_refit_interval_days: int = 21
+    jm_min_history_days: int = 252
+    jm_window: str = "expanding"
+    jm_rolling_window_days: int = 2000
+    jm_continuous: bool = False
+    jm_n_init: int = 10
+    jm_max_iter: int = 30
+    jm_tol: float = 1e-8
+    jm_random_seed: int = 0
     fred_api_key: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize this config to a JSON-safe dict (delegates to module-level to_dict)."""
+        return to_dict(self)
 
 
 def _coerce_field(name: str, value: Any) -> Any:

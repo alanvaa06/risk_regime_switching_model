@@ -11,6 +11,7 @@ from roro.types import (
     CorrelationFrame,
     FredFrame,
     HmmRegimeFrame,
+    JmRegimeFrame,
     PriceFrame,
     RegimeFrame,
     ReturnsFrame,
@@ -74,3 +75,14 @@ def test_imports_available() -> None:
     assert CorrelationFrame is not None
     assert ValidationFrame is not None
     assert AlertSet is not None
+
+
+def test_jm_regime_frame_fields() -> None:
+    empty = pd.DataFrame()
+    f = JmRegimeFrame(
+        state=empty, label=empty, prob_risk_off=empty, prob_transitional=empty,
+        prob_risk_on=empty, confidence=empty, n_per_segment=empty,
+        thin_cut_flag=empty, cold_start_flag=empty,
+    )
+    assert f.refit_dates == {}
+    assert f.jump_penalty_used == {}
