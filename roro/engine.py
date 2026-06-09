@@ -18,6 +18,7 @@ from roro.io import (
     write_run,
 )
 from roro.regime_hmm import classify_hmm
+from roro.regime_jm import classify_jm
 from roro.regression import compute_beta_by_segment
 from roro.returns import daily_log_returns, ewma_vol, total_return_3m
 from roro.segments import partition
@@ -99,6 +100,13 @@ def run(
         else None
     )
 
+    # 5c) Optional JM regime classifier (parallel method, off by default).
+    regime_jm = (
+        classify_jm(beta, cfg=cfg, thin_cuts=frozenset({"LatAm"}))
+        if cfg.jm_enabled
+        else None
+    )
+
     # 6) Cross-sectional correlation panel (avg pairwise + PC1 variance share).
     correlation = compute_correlation_panel(
         daily_log_returns_eq=eq_daily,
@@ -139,7 +147,11 @@ def run(
 
     # 9) Alerts: bucket transitions, disagreement events, validation degradation.
     alerts = detect_alerts(
-        regime=regime, correlation=correlation, validation=validation, regime_hmm=regime_hmm
+        regime=regime,
+        correlation=correlation,
+        validation=validation,
+        regime_hmm=regime_hmm,
+        regime_jm=regime_jm,
     )
 
     # 10) Fingerprint inputs + assemble the RunResult.
@@ -156,6 +168,7 @@ def run(
         beta=beta,
         regime=regime,
         regime_hmm=regime_hmm,
+        regime_jm=regime_jm,
         correlation=correlation,
         validation=validation,
         tripwire=tripwire,

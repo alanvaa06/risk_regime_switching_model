@@ -6,13 +6,14 @@ import pandas as pd
 import pytest
 
 from roro.config import EngineConfig
-from roro.io import load_panel, load_prices, write_run
+from roro.io import _write_regime_jm, load_panel, load_prices, write_run
 from roro.types import (
     AlertSet,
     BetaBySegment,
     BetaFrame,
     CorrelationFrame,
     HmmRegimeFrame,
+    JmRegimeFrame,
     RegimeFrame,
     ReturnsFrame,
     RunResult,
@@ -163,3 +164,25 @@ def test_write_run_no_hmm_artifacts_when_disabled(tmp_path: Path) -> None:
     assert not (out / "hmm_refit_log.csv").exists()
     snap = json.loads((out / "snapshot.json").read_text())
     assert "regime_hmm" not in snap  # key omitted entirely when HMM disabled
+
+
+def test_write_regime_jm_columns_and_rows(tmp_path: Path) -> None:
+    idx = pd.bdate_range("2020-01-01", periods=3)
+
+    def wide(v: list) -> pd.DataFrame:  # type: ignore[type-arg]
+        return pd.DataFrame({"global": v}, index=idx)
+
+    jf = JmRegimeFrame(
+        state=wide([0.0, 1.0, 2.0]), label=wide(["Risk-off", "Transitional", "Risk-on"]),
+        prob_risk_off=wide([1.0, 0.0, 0.0]), prob_transitional=wide([0.0, 1.0, 0.0]),
+        prob_risk_on=wide([0.0, 0.0, 1.0]), confidence=wide([1.0, 1.0, 1.0]),
+        n_per_segment=wide([12, 12, 12]), thin_cut_flag=wide([False, False, False]),
+        cold_start_flag=wide([False, False, False]), refit_dates={"global": [idx[1]]},
+    )
+    out = tmp_path / "regimes_jm.csv"
+    _write_regime_jm(jf, out)
+    df = pd.read_csv(out)
+    assert list(df.columns) == ["date", "segment", "state", "label", "p_risk_off",
+                                "p_transitional", "p_risk_on", "confidence",
+                                "cold_start", "thin_cut"]
+    assert len(df) == 3

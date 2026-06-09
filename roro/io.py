@@ -20,6 +20,7 @@ from roro.types import (
     CorrelationFrame,
     FredFrame,
     HmmRegimeFrame,
+    JmRegimeFrame,
     PriceFrame,
     RegimeFrame,
     RunResult,
@@ -131,6 +132,10 @@ def write_run(
     if result.regime_hmm is not None:
         _write_regime_hmm(result.regime_hmm, tmp / "regimes_hmm.csv")
         _write_hmm_refit_log(result.regime_hmm, tmp / "hmm_refit_log.csv")
+
+    if result.regime_jm is not None:
+        _write_regime_jm(result.regime_jm, tmp / "regimes_jm.csv")
+        _write_jm_refit_log(result.regime_jm, tmp / "jm_refit_log.csv")
 
     snapshot = _build_snapshot(result, run_date=run_date, as_of_data_date=as_of_data_date)
     (tmp / "snapshot.json").write_text(
@@ -292,6 +297,42 @@ def _write_hmm_refit_log(hf: HmmRegimeFrame, path: Path) -> None:
     df.to_csv(path, index=False)
 
 
+def _write_regime_jm(jf: JmRegimeFrame, path: Path) -> None:
+    cols = (
+        "date,segment,state,label,p_risk_off,p_transitional,"
+        "p_risk_on,confidence,cold_start,thin_cut\n"
+    )
+    if jf.label.empty:
+        path.write_text(cols, encoding="utf-8")
+        return
+    merged = _melt_with_date(jf.label, "label")
+    for name, frame in (
+        ("state", jf.state),
+        ("p_risk_off", jf.prob_risk_off.round(10)),
+        ("p_transitional", jf.prob_transitional.round(10)),
+        ("p_risk_on", jf.prob_risk_on.round(10)),
+        ("confidence", jf.confidence.round(10)),
+        ("cold_start", jf.cold_start_flag),
+        ("thin_cut", jf.thin_cut_flag),
+    ):
+        merged = merged.merge(_melt_with_date(frame, name), on=["date", "segment"], how="left")
+    merged = merged[
+        ["date", "segment", "state", "label", "p_risk_off", "p_transitional",
+         "p_risk_on", "confidence", "cold_start", "thin_cut"]
+    ]
+    merged.to_csv(path, index=False)
+
+
+def _write_jm_refit_log(jf: JmRegimeFrame, path: Path) -> None:
+    rows = [
+        {"segment": seg, "refit_date": d}
+        for seg, dates in jf.refit_dates.items()
+        for d in dates
+    ]
+    df = pd.DataFrame(rows, columns=["segment", "refit_date"])
+    df.to_csv(path, index=False)
+
+
 def _safe_float(value: Any) -> float | None:
     try:
         f = float(value)
@@ -324,5 +365,18 @@ def _build_snapshot(
                 "confidence": _safe_float(hf.confidence.loc[last, seg]),
             }
             for seg in hf.label.columns
+        }
+    jf = result.regime_jm
+    if jf is not None and not jf.label.empty:
+        last_jm = jf.label.index[-1]
+        snapshot["regime_jm"] = {
+            seg: {
+                "label": jf.label.loc[last_jm, seg],
+                "p_risk_off": _safe_float(jf.prob_risk_off.loc[last_jm, seg]),
+                "p_transitional": _safe_float(jf.prob_transitional.loc[last_jm, seg]),
+                "p_risk_on": _safe_float(jf.prob_risk_on.loc[last_jm, seg]),
+                "confidence": _safe_float(jf.confidence.loc[last_jm, seg]),
+            }
+            for seg in jf.label.columns
         }
     return snapshot

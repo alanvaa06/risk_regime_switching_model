@@ -4,7 +4,14 @@ from __future__ import annotations
 
 import pandas as pd
 
-from roro.types import AlertSet, CorrelationFrame, HmmRegimeFrame, RegimeFrame, ValidationFrame
+from roro.types import (
+    AlertSet,
+    CorrelationFrame,
+    HmmRegimeFrame,
+    JmRegimeFrame,
+    RegimeFrame,
+    ValidationFrame,
+)
 
 _DISAGREEMENT_CORR_THRESHOLD: float = 0.6
 
@@ -15,6 +22,7 @@ def detect_alerts(
     correlation: CorrelationFrame,
     validation: ValidationFrame,
     regime_hmm: HmmRegimeFrame | None = None,
+    regime_jm: JmRegimeFrame | None = None,
 ) -> AlertSet:
     return AlertSet(
         bucket_transitions=_bucket_transitions(regime.tercile),
@@ -23,6 +31,11 @@ def detect_alerts(
         hmm_bucket_transitions=(
             _bucket_transitions(regime_hmm.label)
             if regime_hmm is not None
+            else pd.DataFrame(columns=["date", "segment", "from_bucket", "to_bucket"])
+        ),
+        jm_bucket_transitions=(
+            _bucket_transitions(regime_jm.label)
+            if regime_jm is not None
             else pd.DataFrame(columns=["date", "segment", "from_bucket", "to_bucket"])
         ),
     )
