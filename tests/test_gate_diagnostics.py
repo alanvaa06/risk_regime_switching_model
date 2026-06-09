@@ -2,18 +2,36 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
+from roro.alerts import _bucket_transitions
 from roro.backtest import Event
+from roro.config import EngineConfig
 from roro.gate_diagnostics import (
     classify_gate,
+    diagnose,
     g3_g5_frontier,
     repair_g3,
     sweep_external_corr,
     sweep_segmentation_lift,
+    write_diagnostics,
 )
 from roro.report.figures import _smooth_regime_hysteresis
+from roro.types import (
+    AlertSet,
+    BetaBySegment,
+    BetaFrame,
+    CorrelationFrame,
+    RegimeFrame,
+    ReturnsFrame,
+    RunResult,
+    Universe,
+    ValidationFrame,
+    VolFrame,
+)
 
 
 def test_sweep_external_corr_is_monotone_nonincreasing() -> None:
@@ -134,3 +152,62 @@ def test_frontier_no_lookahead_prefix_stable() -> None:
     sm_full = _smooth_regime_hysteresis(full["global"], 5)
     sm_prefix = _smooth_regime_hysteresis(full["global"].iloc[:100], 5)
     pd.testing.assert_series_equal(sm_full.iloc[:100], sm_prefix)
+
+
+# ---------------------------------------------------------------------------
+# Task 5 – diagnose() orchestrator + write_diagnostics()
+# ---------------------------------------------------------------------------
+
+
+def _minimal_result() -> RunResult:
+    idx = pd.bdate_range("2020-01-01", "2021-12-31")
+    empty = pd.DataFrame()
+    terc = pd.DataFrame(
+        {
+            "global": _flippy_labels(idx),
+            "DM_Eq": pd.Series("Risk-on", index=idx),
+            "EM_Eq": pd.Series("Risk-off", index=idx),
+        }
+    )
+    daily = pd.DataFrame({"global": pd.Series(1e-4, index=idx)})
+    transitions = _bucket_transitions(terc[["global"]])
+    bf = BetaFrame(cap_wtd=empty, eq_wtd=empty, slope_spread=pd.Series(dtype=float))
+    bbs = BetaBySegment(by_segment={"global": bf})
+    return RunResult(
+        config=EngineConfig(data_path=Path("d.xlsx"), output_dir=Path("o")),
+        universe=Universe(countries=empty, composites=empty),
+        returns=ReturnsFrame(log_returns_3m=empty, daily_log_returns=daily),
+        vol=VolFrame(ewma_sigma_annualized=empty),
+        beta=bbs,
+        regime=RegimeFrame(percentile_5y=empty, tercile=terc, quintile=empty,
+                           direction=empty, n_per_segment=empty, thin_cut_flag=empty,
+                           bootstrap_flag=empty),
+        correlation=CorrelationFrame(avg_pairwise_3m=empty, pc1_variance_share=empty),
+        validation=ValidationFrame(rolling_corr_60d=empty, internal_consistency=empty,
+                                   correlation_alerts=empty),
+        tripwire=bbs,
+        alerts=AlertSet(bucket_transitions=transitions, disagreement_events=empty,
+                        validation_degradation=empty),
+    )
+
+
+def test_diagnose_emits_per_gate_tags_and_frontier() -> None:
+    diag = diagnose(_minimal_result(), start="2020-01-01", end="2021-12-31")
+    assert set(diag["gates"]) == {"G1_vix", "G2_bbb", "G3_events",
+                                  "G4_segmentation_lift", "G5_stability", "G6_internal"}
+    for g in diag["gates"].values():
+        assert g["root_cause"] in {"bug", "vacuous", "shared", "borderline", "real"}
+    assert not diag["frontier"].empty
+    assert {"confirm_days", "events_caught", "max_calm_transitions"} <= set(
+        diag["frontier"].columns
+    )
+
+
+def test_write_diagnostics_is_deterministic(tmp_path: Path) -> None:
+    diag = diagnose(_minimal_result(), start="2020-01-01", end="2021-12-31")
+    write_diagnostics(tmp_path / "a", diag)
+    write_diagnostics(tmp_path / "b", diag)
+    a = (tmp_path / "a" / "gate_diagnostics.json").read_text(encoding="utf-8")
+    b = (tmp_path / "b" / "gate_diagnostics.json").read_text(encoding="utf-8")
+    assert a == b
+    assert (tmp_path / "a" / "g3_g5_frontier.csv").exists()

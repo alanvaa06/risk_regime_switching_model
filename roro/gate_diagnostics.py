@@ -8,6 +8,8 @@ no production artifacts and mutates nothing.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -15,15 +17,21 @@ import pandas as pd
 from roro.alerts import _bucket_transitions
 from roro.backtest import (
     _TERCILE_ORDINAL,
+    EVENTS,
     Event,
     _calm_quarters,
     _count_max_calm_transitions,
+    _evaluate_gates,
     _event_hits,
 )
 from roro.report.figures import _smooth_regime_hysteresis
+from roro.types import RunResult
 
 _SHARED_EPS = 1e-9
 _BORDERLINE_REL = 0.15
+_RHO_GRID = [0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+_GAP_GRID = [1, 2]
+_CONFIRM_GRID = [0, 1, 2, 3, 5, 8, 13, 21, 34]
 
 
 def sweep_external_corr(
@@ -143,3 +151,132 @@ def g3_g5_frontier(
             }
         )
     return pd.DataFrame(rows)
+
+
+def diagnose(
+    result: RunResult,
+    *,
+    start: str,
+    end: str,
+    baseline_compare_path: Path | None = None,
+) -> dict[str, Any]:
+    """Recompute gates, sweep, repair G3, trace the frontier, classify each gate."""
+    terc = result.regime.tercile
+    hmm_label = result.regime_hmm.label if result.regime_hmm is not None else terc
+    perc_gates = _evaluate_gates(
+        result, labels=terc, transitions=result.alerts.bucket_transitions
+    )
+    hmm_gates = _evaluate_gates(
+        result,
+        labels=hmm_label,
+        transitions=(
+            result.alerts.hmm_bucket_transitions
+            if result.regime_hmm is not None
+            else result.alerts.bucket_transitions
+        ),
+    )
+
+    g3 = repair_g3(terc, EVENTS, start=start, end=end)
+
+    def _num(d: dict[str, Any]) -> float:
+        for k in (
+            "fraction_above",
+            "fraction_with_gap_ge_2",
+            "max_transitions_in_calm_quarter",
+            "matched_events",
+        ):
+            if k in d:
+                return float(d[k])
+        return 0.0
+
+    thresholds: dict[str, float] = {
+        "G1_vix": 0.8,
+        "G2_bbb": 0.8,
+        "G3_events": float(len(EVENTS)),
+        "G4_segmentation_lift": 0.2,
+        "G5_stability": 2.0,
+        "G6_internal": 5.0,
+    }
+    gates: dict[str, dict[str, Any]] = {}
+    for name, pg in perc_gates.items():
+        hg = hmm_gates[name]
+        oor = g3["out_of_range"] if name == "G3_events" else []
+        tag = classify_gate(
+            passed=bool(pg.get("passed", False)),
+            percentile_value=_num(pg),
+            hmm_value=_num(hg),
+            value=_num(pg),
+            threshold=thresholds[name],
+            vacuous_reason=pg.get("reason"),
+            out_of_range=oor,
+        )
+        gates[name] = {
+            "percentile": pg,
+            "hmm": hg,
+            "threshold": thresholds[name],
+            "root_cause": tag,
+            "shared": abs(_num(pg) - _num(hg)) <= _SHARED_EPS,
+        }
+
+    sweeps = {
+        "G1_vix": sweep_external_corr(
+            result.validation.rolling_corr_60d,
+            series_id="VIXCLS",
+            rho_grid=_RHO_GRID,
+        ),
+        "G2_bbb": sweep_external_corr(
+            result.validation.rolling_corr_60d,
+            series_id="BAMLC0A4CBBB",
+            rho_grid=_RHO_GRID,
+        ),
+        "G4_segmentation_lift": sweep_segmentation_lift(terc, gap_grid=_GAP_GRID),
+    }
+    frontier = g3_g5_frontier(
+        terc,
+        result.returns.daily_log_returns,
+        events=EVENTS,
+        start=start,
+        end=end,
+        confirm_grid=_CONFIRM_GRID,
+    )
+
+    baseline_pinned: bool | None = None
+    if baseline_compare_path is not None and baseline_compare_path.exists():
+        ref: dict[str, Any] = json.loads(
+            baseline_compare_path.read_text(encoding="utf-8")
+        )
+        baseline_pinned = all(
+            ref[g]["percentile"].get("passed") == perc_gates[g].get("passed")
+            for g in perc_gates
+            if g in ref
+        )
+
+    return {
+        "start": start,
+        "end": end,
+        "gates": gates,
+        "g3_repair": g3,
+        "sweeps": sweeps,
+        "frontier": frontier,
+        "baseline_pinned": baseline_pinned,
+    }
+
+
+def write_diagnostics(out_dir: Path, diag: dict[str, Any]) -> None:
+    """Emit gate_diagnostics.json + g3_g5_frontier.csv (deterministic, no timestamps)."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    serializable: dict[str, Any] = {
+        "start": diag["start"],
+        "end": diag["end"],
+        "baseline_pinned": diag["baseline_pinned"],
+        "gates": diag["gates"],
+        "g3_repair": diag["g3_repair"],
+        "sweeps": {
+            k: v.to_dict(orient="records") for k, v in diag["sweeps"].items()
+        },
+    }
+    (out_dir / "gate_diagnostics.json").write_text(
+        json.dumps(serializable, indent=2, sort_keys=True, default=str),
+        encoding="utf-8",
+    )
+    diag["frontier"].to_csv(out_dir / "g3_g5_frontier.csv", index=False)
