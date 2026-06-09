@@ -60,6 +60,8 @@ def walk_forward(
     refit_dates: list[pd.Timestamp] = []
     last_good: tuple[NDArray[np.float64], float, float] | None = None
 
+    grid = discretize_simplex(n_states, 0.05) if continuous else None
+
     r = min_history_days
     while r < n:
         block_end = min(r + refit_interval_days, n)
@@ -87,7 +89,7 @@ def walk_forward(
             cvals = clean.to_numpy(dtype=np.float64)
             inf_win = (cvals[inf_lo:block_end] - u_mean) / u_std
             if continuous:
-                grid = discretize_simplex(n_states, 0.05)
+                assert grid is not None
                 soft = online_soft_states(inf_win, centroids, jump_penalty, grid)
                 for e in range(r, block_end):
                     probs[e, :] = np.round(soft[e - inf_lo], 10)

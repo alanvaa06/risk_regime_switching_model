@@ -165,6 +165,24 @@ def test_engine_jm_byte_identical_and_artifacts(tiny_xlsx: Path, tmp_path: Path)
     assert "jm_jump_penalty" in cfg_resolved
 
 
+def test_engine_jm_cjm_byte_identical(tiny_xlsx: Path, tmp_path: Path) -> None:
+    idx = pd.bdate_range("2019-01-01", "2024-12-31")
+    seeded = {sid: pd.Series(20.0, index=idx) for sid in FRED_SERIES_IDS}
+
+    def _run(out: str) -> bytes:
+        cfg = EngineConfig(
+            data_path=tiny_xlsx, output_dir=tmp_path / out, ewma_halflife_days=10,
+            return_window_days=21, tripwire_window_days=10, percentile_window_years=1,
+            min_n_per_cut=2, bootstrap_min_days=10, jm_enabled=True, jm_continuous=True,
+            jm_min_history_days=120, jm_refit_interval_days=60, jm_n_init=4,
+        )
+        engine_run(cfg, fred_client=MockFredClient(seeded=seeded),
+                   run_date="2024-12-31", as_of_data_date="2024-12-31", force=True)
+        return (tmp_path / out / "2024-12-31" / "regimes_jm.csv").read_bytes()
+
+    assert _run("a") == _run("b")  # AJ-2: CJM (soft probs) byte-identical too
+
+
 def test_walk_forward_cjm_deterministic_and_causal() -> None:
     s = _two_regime_series(500)
     kw: dict[str, Any] = dict(jump_penalty=20.0, refit_interval_days=21,
