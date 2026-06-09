@@ -160,7 +160,12 @@ def diagnose(
     end: str,
     baseline_compare_path: Path | None = None,
 ) -> dict[str, Any]:
-    """Recompute gates, sweep, repair G3, trace the frontier, classify each gate."""
+    """Recompute gates, sweep, repair G3, trace the frontier, classify each gate.
+
+    When ``result.regime_hmm`` is None (percentile-only run), the HMM path
+    mirrors the percentile labels, so every non-vacuous gate is tagged
+    ``"shared"`` — meaning "HMM was not run", not "both methods agree".
+    """
     terc = result.regime.tercile
     hmm_label = result.regime_hmm.label if result.regime_hmm is not None else terc
     perc_gates = _evaluate_gates(
@@ -184,6 +189,7 @@ def diagnose(
             "fraction_with_gap_ge_2",
             "max_transitions_in_calm_quarter",
             "matched_events",
+            "max_breaches_in_30d_window",
         ):
             if k in d:
                 return float(d[k])
@@ -245,6 +251,8 @@ def diagnose(
         ref: dict[str, Any] = json.loads(
             baseline_compare_path.read_text(encoding="utf-8")
         )
+        # Pin compares pass/fail verdicts only; gates absent from an older baseline
+        # file are skipped (unconstrained), not treated as failures.
         baseline_pinned = all(
             ref[g]["percentile"].get("passed") == perc_gates[g].get("passed")
             for g in perc_gates
