@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 
@@ -33,7 +35,7 @@ def test_walk_forward_returns_hmm_parity_keys() -> None:
 
 def test_walk_forward_deterministic() -> None:
     s = _two_regime_series()
-    kw = dict(jump_penalty=20.0, refit_interval_days=21, min_history_days=252,
+    kw: dict[str, Any] = dict(jump_penalty=20.0, refit_interval_days=21, min_history_days=252,
               n_states=3, window="expanding", rolling_window_days=2000,
               continuous=False, n_init=5, max_iter=30, tol=1e-8, seed=0)
     a, b = walk_forward(s, **kw), walk_forward(s, **kw)
@@ -44,7 +46,7 @@ def test_walk_forward_deterministic() -> None:
 def test_walk_forward_no_lookahead() -> None:
     # Label at date t is invariant to appending future rows (causal online inference).
     s = _two_regime_series(600)
-    kw = dict(jump_penalty=20.0, refit_interval_days=21, min_history_days=252,
+    kw: dict[str, Any] = dict(jump_penalty=20.0, refit_interval_days=21, min_history_days=252,
               n_states=3, window="expanding", rolling_window_days=2000,
               continuous=False, n_init=5, max_iter=30, tol=1e-8, seed=0)
     full = walk_forward(s, **kw)["label"]
@@ -66,16 +68,16 @@ def test_walk_forward_drops_nan_emits_unknown() -> None:
 def test_walk_forward_rolling_no_lookahead_and_deterministic() -> None:
     # Rolling window: causal + deterministic, mirroring the expanding no-lookahead test.
     s = _two_regime_series(500)
-    kw: dict[str, object] = dict(
+    kw: dict[str, Any] = dict(
         jump_penalty=20.0, refit_interval_days=21, min_history_days=200,
         n_states=3, window="rolling", rolling_window_days=120,
         continuous=False, n_init=5, max_iter=30, tol=1e-8, seed=0,
     )
-    full = walk_forward(s, **kw)["label"]  # type: ignore[arg-type]
-    prefix = walk_forward(s.iloc[:400], **kw)["label"]  # type: ignore[arg-type]
+    full = walk_forward(s, **kw)["label"]
+    prefix = walk_forward(s.iloc[:400], **kw)["label"]
     pd.testing.assert_series_equal(full.iloc[:400], prefix)  # no lookahead under rolling
-    a = walk_forward(s, **kw)  # type: ignore[arg-type]
-    b = walk_forward(s, **kw)  # type: ignore[arg-type]
+    a = walk_forward(s, **kw)
+    b = walk_forward(s, **kw)
     pd.testing.assert_series_equal(a["state"], b["state"])    # deterministic
 
 
