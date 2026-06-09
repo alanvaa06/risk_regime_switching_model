@@ -11,7 +11,9 @@ from roro.jump_model import (
     _objective,
     _update_centroids,
     _viterbi_path,
+    discretize_simplex,
     fit_jump_model,
+    online_soft_states,
     online_states,
 )
 
@@ -144,3 +146,23 @@ def test_objective_fit_loss_plus_jump_penalty() -> None:
     labels = np.array([0, 1, 0], dtype=np.intp)  # picks 0.0, 0.0, 0.0 -> fit_loss 0
     # transitions: 0->1 (jump), 1->0 (jump) = 2 jumps
     assert _objective(loss_mx, labels, 5.0) == 0.0 + 5.0 * 2
+
+
+def test_discretize_simplex_is_deterministic_and_valid() -> None:
+    g1 = discretize_simplex(3, 0.05)
+    g2 = discretize_simplex(3, 0.05)
+    assert np.array_equal(g1, g2)            # fixed enumeration order
+    assert g1.shape[1] == 3
+    assert np.allclose(g1.sum(axis=1), 1.0)  # all on the simplex
+    assert (g1 >= -1e-12).all()
+
+
+def test_online_soft_states_sum_to_one_and_causal() -> None:
+    rng = np.random.default_rng(4)
+    y = rng.normal(size=120)
+    c = np.array([-1.0, 0.0, 1.0])
+    grid = discretize_simplex(3, 0.1)
+    soft_full = online_soft_states(y, c, 5.0, grid)
+    soft_prefix = online_soft_states(y[:80], c, 5.0, grid)
+    assert np.allclose(soft_full.sum(axis=1), 1.0)
+    assert np.allclose(soft_full[:80], soft_prefix)  # no lookahead

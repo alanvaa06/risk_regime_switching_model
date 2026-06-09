@@ -206,3 +206,52 @@ def online_states(
     values = _forward_values(_loss_matrix(y, centroids), jump_penalty)
     result: NDArray[np.intp] = values.argmin(axis=1).astype(np.intp)
     return result
+
+
+def discretize_simplex(k: int, grid_size: float) -> NDArray[np.float64]:
+    """Fixed lexicographic grid of prob vectors with components in multiples of
+    grid_size summing to 1. Deterministic enumeration order (grid index -> vector)."""
+    steps = int(round(1.0 / grid_size))
+    rows: list[list[float]] = []
+
+    def _recurse(prefix: list[int], remaining: int, slots: int) -> None:
+        if slots == 1:
+            rows.append([p / steps for p in (*prefix, remaining)])
+            return
+        for take in range(remaining + 1):
+            _recurse([*prefix, take], remaining - take, slots - 1)
+
+    _recurse([], steps, k)
+    return np.asarray(rows, dtype=np.float64)
+
+
+def _cjm_loss_rows(
+    loss_mx: NDArray[np.float64], grid: NDArray[np.float64]
+) -> NDArray[np.float64]:
+    """Per-day loss of each grid vector: sum_k grid[n,k]*loss_mx[t,k].
+
+    Broadcast-and-sum, NOT a BLAS matmul, so D=1 stays bit-stable across BLAS
+    thread counts (spec section 8)."""
+    result: NDArray[np.float64] = (loss_mx[:, None, :] * grid[None, :, :]).sum(axis=2)
+    return result
+
+
+def online_soft_states(
+    y: NDArray[np.float64],
+    centroids: NDArray[np.float64],
+    jump_penalty: float,
+    grid: NDArray[np.float64],
+) -> NDArray[np.float64]:
+    """Causal soft state vectors (T,k): forward DP over the fixed simplex grid."""
+    loss_mx = _loss_matrix(y, centroids)
+    cjm_loss = _cjm_loss_rows(loss_mx, grid)                       # (T, N_grid)
+    l1 = np.abs(grid[:, None, :] - grid[None, :, :]).sum(axis=2)   # (N,N)
+    penalty = jump_penalty * (l1 * l1)                             # L1-squared
+    t_len, n_grid = cjm_loss.shape
+    values = np.empty((t_len, n_grid), dtype=np.float64)
+    values[0] = cjm_loss[0]
+    for t in range(1, t_len):
+        values[t] = cjm_loss[t] + (values[t - 1][:, None] + penalty).min(axis=0)
+    chosen = values.argmin(axis=1)
+    result: NDArray[np.float64] = grid[chosen]
+    return result

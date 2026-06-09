@@ -16,7 +16,12 @@ import pandas as pd
 from numpy.typing import NDArray
 
 from roro.config import EngineConfig
-from roro.jump_model import fit_jump_model, online_states
+from roro.jump_model import (
+    discretize_simplex,
+    fit_jump_model,
+    online_soft_states,
+    online_states,
+)
 from roro.types import BetaBySegment, JmRegimeFrame
 
 _ORDERED_LABELS = ("Risk-off", "Transitional", "Risk-on")
@@ -81,12 +86,19 @@ def walk_forward(
             inf_lo = 0 if window == "expanding" else max(0, r - rolling_window_days)
             cvals = clean.to_numpy(dtype=np.float64)
             inf_win = (cvals[inf_lo:block_end] - u_mean) / u_std
-            states = online_states(inf_win, centroids, jump_penalty)
-            for e in range(r, block_end):
-                s = int(states[e - inf_lo])
-                probs[e, :] = 0.0
-                probs[e, s] = 1.0
-                cold[e] = False
+            if continuous:
+                grid = discretize_simplex(n_states, 0.05)
+                soft = online_soft_states(inf_win, centroids, jump_penalty, grid)
+                for e in range(r, block_end):
+                    probs[e, :] = np.round(soft[e - inf_lo], 10)
+                    cold[e] = False
+            else:
+                states = online_states(inf_win, centroids, jump_penalty)
+                for e in range(r, block_end):
+                    s = int(states[e - inf_lo])
+                    probs[e, :] = 0.0
+                    probs[e, s] = 1.0
+                    cold[e] = False
         r = block_end
 
     state_idx = np.where(np.isnan(probs).any(axis=1), -1, probs.argmax(axis=1))

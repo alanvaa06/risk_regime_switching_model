@@ -163,3 +163,16 @@ def test_engine_jm_byte_identical_and_artifacts(tiny_xlsx: Path, tmp_path: Path)
     cfg_resolved = snap["config_resolved"]
     assert cfg_resolved["jm_enabled"] is True                       # jm_* captured in snapshot
     assert "jm_jump_penalty" in cfg_resolved
+
+
+def test_walk_forward_cjm_deterministic_and_causal() -> None:
+    s = _two_regime_series(500)
+    kw: dict[str, Any] = dict(jump_penalty=20.0, refit_interval_days=21,
+              min_history_days=200, n_states=3, window="expanding",
+              rolling_window_days=2000, continuous=True, n_init=4, max_iter=30,
+              tol=1e-8, seed=0)
+    a, b = walk_forward(s, **kw), walk_forward(s, **kw)
+    pd.testing.assert_series_equal(a["prob_risk_off"], b["prob_risk_off"])
+    full = walk_forward(s, **kw)["prob_risk_on"]
+    prefix = walk_forward(s.iloc[:420], **kw)["prob_risk_on"]
+    pd.testing.assert_series_equal(full.iloc[:420], prefix)
