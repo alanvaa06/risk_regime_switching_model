@@ -3,7 +3,7 @@
 > A daily, reproducible, academically-anchored classifier of the global "risk-on / risk-off" (RoRo) state, estimated from the cross-sectional relationship between realized return and realized volatility across 64 country-level index series, segmented into 10 cuts, and validated against external risk-cycle proxies and internal composite aggregates.
 
 **Author:** Alan Vazquez, CFA
-**Status:** v1.1 — *diagnostic only* (no predictive layer). Adds an optional HMM / Markov-switching regime overlay (off by default; the percentile classifier remains the production default) and an expanded interactive report (HMM filtered-probability view + percentile↔HMM band toggle + volatility-breadth heatmaps).
+**Status:** v1.1 — *diagnostic only* (no predictive layer). Adds two optional, off-by-default regime overlays — an **HMM / Markov-switching** model and a **Statistical Jump Model** — alongside the production-default percentile/tercile classifier, plus an expanded interactive report (per-overlay state-probability figures + a Percentile ↔ HMM ↔ JM band toggle + volatility-breadth heatmaps). All three classifiers are scored through the same acceptance gates.
 **License of data:** proprietary (`data.xlsx` is git-ignored); external proxies are free (FRED).
 
 ![Segment β with regime bands](docs/assets/report_beta_timeseries.png)
@@ -170,6 +170,12 @@ The overlay is **causal by construction**: parameters are re-estimated on an **e
 
 When enabled, both methods are scored through the same §9 acceptance gates and a comparison report is written. On the full 2008–2026 backtest the **percentile classifier remains the production default**: the HMM passed no gate outright and slightly regressed event recognition (G3 6/8 vs 7/8) but **halved the calm-quarter flicker (G5 9 vs 18 transitions)** — directionally validating the persistence thesis without clearing the strict bars. It therefore ships as an overlay, not a replacement. EM mean-sorted state ordering is re-canonicalized at every refit to defeat EM label-switching; degenerate/non-converged fits fall back to the previous good parameters.
 
+#### 5.4.2 Optional Statistical Jump Model overlay (`roro/regime_jm.py`)
+
+A second optional overlay (`jm_enabled`, default `False`) fits a **3-state statistical jump model** (Bemporad et al. 2018; Nystrup et al. 2020; Shu & Mulvey 2024) to each segment's cap-weighted slope. Where the HMM learns a transition *matrix*, the JM imposes persistence with a single **fixed jump penalty** `λ`: it minimizes clustering loss plus `λ · (number of regime transitions)`. That structural cost holds regimes through noise **without** the lag a learned transition matrix imposes on sharp moves — the thesis being a less-flickering label than the percentile classifier that still snaps cleanly on genuine breaks. The three centroids are ordered by fitted mean → Risk-off / Transitional / Risk-on.
+
+Like the HMM, the JM is **causal by construction** (parameters re-fit on an expanding/rolling point-in-time window; states inferred by a forward-only dynamic-programming filter — no lookahead) and **deterministic** (seeded k-means++ initialization via NumPy `PCG64`, byte-identical CSV output is enforced by a regression test). It is **vendored as a small dependency-free NumPy module** rather than pulling in `scikit-learn`, to keep the determinism guarantee under the project's pinned toolchain. A continuous variant (`jm_continuous: true`) emits soft per-day state probabilities for the report's stacked-area figure. The JM ships off by default; promotion to production default is reserved for a documented decision once it clears the persistence gate (G5) without regressing event recognition (G3) — the exact bar the HMM could not meet. Full design: `docs/superpowers/specs/2026-06-09-jm-regime-design.md`.
+
 ### 5.5 Correlation-structure signal (`roro/correlation.py`)
 
 On the same 3-month window, per segment:
@@ -229,18 +235,18 @@ This is distinct from the segment-level cross-sectional slope of §5.2 — it is
 - **Thin CLI over a library.** `roro/cli.py` (Click) exposes `run`, `backtest`, and `report`; everything is importable as a library.
 - **Atomic writes.** Run output is written to a `<date>.tmp` directory and renamed on success, so a partial run never corrupts an existing one.
 
-**Engine module map:** `config` (frozen `EngineConfig` + YAML loader), `types` (frozen dataclasses), `io` (Excel/FRED ingest + run writer), `validators`, `fred_client` (Protocol + live + mock), `returns`, `segments`, `regression`, `classify`, `regime_hmm` (optional HMM overlay, §5.4.1), `correlation`, `validation`, `tripwire`, `alerts`, `engine` (orchestrator), `backtest` (acceptance gates + dual-method comparison), `cli`. The report layer adds `roro/report/vol_breadth.py` (realized-vol percentile matrix) alongside `load → figures → html → orchestrate`.
+**Engine module map:** `config` (frozen `EngineConfig` + YAML loader), `types` (frozen dataclasses), `io` (Excel/FRED ingest + run writer), `validators`, `fred_client` (Protocol + live + mock), `returns`, `segments`, `regression`, `classify`, `regime_hmm` (optional HMM overlay, §5.4.1), `jump_model` + `regime_jm` (optional vendored Jump Model overlay, §5.4.2), `correlation`, `validation`, `tripwire`, `alerts`, `engine` (orchestrator), `backtest` (acceptance gates + multi-method comparison), `cli`. The report layer adds `roro/report/vol_breadth.py` (realized-vol percentile matrix) alongside `load → figures → html → orchestrate`.
 
 ---
 
 ## 7. The interactive report
 
-`roro report` consumes a run directory plus the source `data.xlsx` and emits a single self-contained interactive HTML file (Plotly, loaded from CDN). It renders **five figures for a standard run, six when the run was produced with the HMM overlay enabled**:
+`roro report` consumes a run directory plus the source `data.xlsx` and emits a single self-contained interactive HTML file (Plotly, loaded from CDN). It renders **five figures for a standard run, plus one state-probability figure for each regime overlay present in the run** (one for HMM, one for JM):
 
 1. **Risk-return scatter** — x = EWMA annualized volatility, y = 3-month total log return. One marker per country-asset, colored **blue (DM) / green (EM)**, with a **dashed OLS trend line and a 95% confidence ribbon per group**. A **date slider** (trailing 252 business days) animates the snapshot through time; a **segment dropdown** (Full / DM / EM / DM_Eq / EM_Eq / DM_FI / EM_FI) filters the points and **retightens both axes to the selected cluster**.
 2. **Beta-return scatter** — identical, with x = per-series 63-day beta vs the cap-weighted global proxy (§5.7).
-3. **Segment β time-series** — the cap-weighted slope for a selected segment over the **full available history**, with the background shaded by tercile regime band (Risk-off red / Transitional grey / Risk-on green). A segment dropdown switches the line and its shading. When the run carries HMM output, a **"Regime bands: Percentile ↔ HMM" toggle** above this chart swaps the band source on the same β line — directly contrasting the hysteresis-smoothed percentile bands with the intrinsically-persistent HMM bands.
-4. **HMM regime probabilities** *(only when `hmm_enabled`)* — a per-segment **stacked area of the three filtered state probabilities** (Risk-off / Transitional / Risk-on, summing to 1.0) over full history. A thin dominant band signals low model confidence; the warmup region is left blank. The soft view the percentile hard labels cannot express.
+3. **Segment β time-series** — the cap-weighted slope for a selected segment over the **full available history**, with the background shaded by tercile regime band (Risk-off red / Transitional grey / Risk-on green). A segment dropdown switches the line and its shading. When the run carries overlay output, a **band-source toggle (Percentile ↔ HMM ↔ JM)** above this chart swaps the shaded bands on the same β line between whichever methods are present — directly contrasting the hysteresis-smoothed percentile bands with the intrinsically-persistent HMM and JM bands.
+4. **HMM / JM regime probabilities** *(one figure per enabled overlay)* — a per-segment **stacked area of the three state probabilities** (Risk-off / Transitional / Risk-on, summing to 1.0) over full history: filtered probabilities for the HMM, soft state probabilities for the continuous JM (one-hot steps for the discrete JM). A thin dominant band signals low model confidence; the warmup region is left blank. The soft view the percentile hard labels cannot express.
 5. **Volatility breadth (sorted-rank)** — a heatmap answering *how many* assets trade at elevated volatility versus their own history. Each day, the cross-section of per-series **63-day realized-vol percentiles** (ranked against each series' expanding ≥5-year history) is **sorted descending**; the thickness of the bright band at the top is the count of stressed assets. Plasma colorscale; an **All / Eq / FI class toggle**.
 6. **Volatility percentile by asset** — the same data as a per-series identity heatmap (one fixed row per series, ordered by mean percentile), showing *which* assets are stressed and letting you track one over time. Same Plasma scale and class toggle.
 
@@ -340,15 +346,34 @@ cp .env.example .env               # then edit .env (never commit it)
 
 > **Security:** `.env` is git-ignored; `.env.example` must only ever contain the placeholder. Never paste a real key into a tracked file.
 
+### Choose a regime classifier
+
+RoRo can label regimes three ways. The **percentile / tercile** classifier is always on and is the production default; the **HMM** and **Jump Model** are optional overlays, off by default. Enable any combination by flipping flags in the config YAML — ready-made configs are provided so you don't have to.
+
+| Classifier | What it is | How to enable | Ready config |
+|---|---|---|---|
+| **Terciles** *(default, always on)* | Ranks today's cap-weighted slope against its trailing 5-year distribution → Risk-off / Transitional / Risk-on. Fast, no persistence. | nothing to set | `configs/default.yaml` |
+| **HMM overlay** | 3-state Markov-switching model (mean + variance) on the slope; persistent regimes + soft filtered probabilities, causal (monthly refit + Hamilton filter). | `hmm_enabled: true` | `configs/eval.yaml` |
+| **Jump Model (JM) overlay** | 3-state statistical jump model: a fixed *jump penalty* enforces persistence structurally (holds regimes through noise without the HMM's lag). Deterministic, causal, byte-identical output. | `jm_enabled: true` (add `jm_continuous: true` for soft probability bands) | `configs/jm-only.yaml` |
+
+All three are scored through the same acceptance gates (§9), so you can compare them head-to-head. The overlays are **off by default** — with both off, the engine and report are byte-identical to the terciles-only baseline.
+
 ### Daily run
 
 ```bash
+# 1) Terciles only (production default)
 roro run --config configs/default.yaml --date 2026-05-27 --as-of-data-date 2026-05-26
+
+# 2) Terciles + Jump Model (fast; soft JM probability bands)
+roro run --config configs/jm-only.yaml --date 2026-05-27 --as-of-data-date 2026-05-26
+
+# 3) All three — Terciles + HMM + Jump Model (full side-by-side comparison)
+roro run --config configs/jm-eval.yaml --date 2026-05-27 --as-of-data-date 2026-05-26
 ```
 
-Produces `outputs/2026-05-27/` (see §11).
+Each produces `outputs/<run-date>/` (see §11). The run emits `regimes.csv` always, plus `regimes_hmm.csv` / `regimes_jm.csv` (and their refit logs) for whichever overlays are enabled.
 
-> **Enabling the HMM overlay (§5.4.1):** set `hmm_enabled: true` in the config YAML (defaults: `hmm_refit_interval_days: 21`, `hmm_min_history_days: 252`, `hmm_switching_variance: true`). The run then also emits `regimes_hmm.csv` + `hmm_refit_log.csv`, and `roro report` adds the HMM probability figure and the percentile↔HMM band toggle. Left off, the engine and report behave exactly as v1.0.
+> **Tuning the overlays** *(optional — the defaults are sensible)*: HMM — `hmm_refit_interval_days` (21), `hmm_min_history_days` (252), `hmm_switching_variance` (true). JM — `jm_jump_penalty` (50.0; the persistence knob — higher = fewer regime switches), `jm_refit_interval_days` (21), `jm_window` (`expanding` or `rolling`), `jm_random_seed` (0; determinism), `jm_continuous` (false → hard one-hot bands; true → soft simplex probabilities). See `configs/jm-eval.yaml` for a fully-populated example.
 
 ### Build the report
 
@@ -356,13 +381,15 @@ Produces `outputs/2026-05-27/` (see §11).
 roro report --run-dir outputs/2026-05-27 --window 252 --out outputs/2026-05-27/report.html
 ```
 
-`--xlsx` defaults to the `data_path` recorded in the run's `snapshot.json`.
+`--xlsx` defaults to the `data_path` recorded in the run's `snapshot.json`. The report renders whatever classifiers the run produced: the segment-β chart gets a **band-source toggle (Percentile ↔ HMM ↔ JM)** so you can switch the shaded regime bands between methods on the same slope line, and each enabled overlay adds its own **state-probability figure** (HMM filtered probabilities / JM state probabilities). Run config 3 above to see all three at once.
 
 ### Backtest with acceptance gates
 
 ```bash
 roro backtest --config configs/default.yaml --start 2010-01-01 --end 2024-12-31 --assert-gates
 ```
+
+`--assert-gates` gates the **production (percentile)** method. When HMM and/or JM are enabled in the config, the backtest also writes `acceptance_report_hmm.json` / `acceptance_report_jm.json` and a gate-by-gate `acceptance_compare.json` (`{percentile, hmm, jm}`) so you can see exactly where each method wins or loses.
 
 ### Development gates
 
@@ -388,10 +415,12 @@ A run directory (`outputs/<run-date>/`) contains:
 | `alerts.csv` | Bucket transitions, disagreement events, validation-degradation events (HMM-label transitions too when the overlay is on). |
 | `regimes_hmm.csv` | *(only when `hmm_enabled`)* Per (date, segment): HMM state, label, the three filtered probabilities, confidence, cold-start and thin-cut flags. |
 | `hmm_refit_log.csv` | *(only when `hmm_enabled`)* The dates on which HMM parameters were re-estimated, per segment (refit-cadence provenance). |
-| `snapshot.json` | Resolved config, data fingerprint (SHA-256 + mtime), FRED hashes, code version, warnings; a `regime_hmm` block when the overlay is on. |
-| `report.html` | (from `roro report`) the interactive dashboard — five figures, six with HMM. |
+| `regimes_jm.csv` | *(only when `jm_enabled`)* Per (date, segment): JM state, label, the three state probabilities (one-hot for discrete / soft for continuous), confidence, cold-start and thin-cut flags. Same schema as `regimes_hmm.csv`. |
+| `jm_refit_log.csv` | *(only when `jm_enabled`)* The dates on which JM centroids were re-estimated, per segment. |
+| `snapshot.json` | Resolved config, data fingerprint (SHA-256 + mtime), FRED hashes, code version, warnings; a `regime_hmm` / `regime_jm` block when the respective overlay is on. |
+| `report.html` | (from `roro report`) the interactive dashboard — five figures, plus one state-probability figure per enabled overlay (HMM / JM). |
 
-When `roro backtest` runs with the HMM overlay enabled, it additionally writes `acceptance_report_hmm.json` and `acceptance_compare.json` (the gate-by-gate percentile-vs-HMM comparison) alongside `acceptance_report.json`.
+When `roro backtest` runs with an overlay enabled, it additionally writes `acceptance_report_hmm.json` / `acceptance_report_jm.json` and `acceptance_compare.json` (the gate-by-gate `{percentile, hmm, jm}` comparison) alongside `acceptance_report.json`.
 
 ---
 
@@ -409,7 +438,8 @@ Known v1.0 simplifications:
 **Shipped since v1.0 (v1.1):**
 
 - **HMM / Markov-switching regime overlay** (`roro/regime_hmm.py`, §5.4.1) — optional, off by default; causal (filtered + point-in-time monthly refit); compared to the percentile classifier through the acceptance gates. Percentile remains the production default per the 2008–2026 backtest.
-- **Expanded report** — HMM filtered-probability area, the percentile↔HMM band toggle, and the two volatility-breadth heatmaps (§7); `assemble` refactored to explicit per-figure specs.
+- **Statistical Jump Model regime overlay** (`roro/jump_model.py` + `roro/regime_jm.py`, §5.4.2) — optional, off by default; a vendored, dependency-free, deterministic, causal 3-state jump model (fixed jump penalty for structural persistence). Scored against percentile and HMM through the same gates; byte-identical output verified. Off by default pending the G5-without-G3-regression promotion decision.
+- **Expanded report** — per-overlay state-probability figures, the 3-way Percentile ↔ HMM ↔ JM band toggle, and the two volatility-breadth heatmaps (§7); `assemble` refactored to explicit per-figure specs.
 
 Roadmap:
 
