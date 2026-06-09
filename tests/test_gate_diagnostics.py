@@ -92,18 +92,26 @@ def _flippy_labels(idx: pd.DatetimeIndex) -> pd.Series:
     return pd.Series(vals, index=idx)
 
 
-def test_frontier_stability_is_monotone_nonincreasing_in_confirm_days() -> None:
+def test_frontier_stability_drops_with_confirm_days() -> None:
     idx = pd.bdate_range("2020-01-01", "2021-12-31")
-    terc = pd.DataFrame({"global": _flippy_labels(idx)})
-    daily = pd.DataFrame({"global": pd.Series(1e-4, index=idx)})
+    rng = np.random.default_rng(0)
+    # 2020 quiet (nonzero variance -> real calm quarters), 2021 loud.
+    n2020 = int((idx.year == 2020).sum())
+    vals = np.concatenate([
+        rng.normal(0, 1e-4, n2020),
+        rng.normal(0, 1e-2, len(idx) - n2020),
+    ])
+    daily = pd.DataFrame({"global": pd.Series(vals, index=idx)})
+    terc = pd.DataFrame({"global": _flippy_labels(idx)})  # alternates daily -> max flicker
     events = (Event(name="mid", date="2020-06-15"),)
     fr = g3_g5_frontier(
         terc, daily, events=events, start="2020-01-01", end="2021-12-31",
         confirm_grid=[0, 2, 5, 10, 21],
     )
     trans = fr["max_calm_transitions"].to_numpy()
+    assert trans[0] > 0  # raw flippy labels DO flicker inside calm quarters (non-vacuous)
     assert (np.diff(trans) <= 1e-9).all()  # more persistence -> never more flicker
-    assert fr.iloc[0]["max_calm_transitions"] >= fr.iloc[-1]["max_calm_transitions"]
+    assert trans[-1] < trans[0]  # persistence actually reduces calm-quarter flicker
 
 
 def test_frontier_is_deterministic() -> None:
