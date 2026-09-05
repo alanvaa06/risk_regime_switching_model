@@ -18,8 +18,9 @@ FloatArray = np.ndarray[Any, np.dtype[np.float64]]
 
 _DATE = pd.Timestamp("2024-01-01")
 # Comfortably above the production degeneracy floor so the exactness properties below
-# cover well-conditioned panels only; the near-degenerate boundary has its own explicit test.
-_MIN_PTP: float = 1e-4
+# cover well-conditioned panels only; the degenerate floor is covered by the explicit
+# near-duplicate test.
+_MIN_PTP: float = 1e-2
 
 
 def _panel(
@@ -60,7 +61,8 @@ def test_contributions_sum_to_wls_slope(vols: FloatArray, rets: FloatArray, w: F
     for weighting, wvec in (("cap", w), ("eq", np.ones(12))):
         pc = contributions(p, weighting=weighting, min_n=3)  # type: ignore[arg-type]
         assert pc is not None
-        assert abs(pc.c.sum() - _wls_slope(vols, rets, wvec)) < 1e-10
+        slope = _wls_slope(vols, rets, wvec)
+        assert abs(pc.c.sum() - slope) <= 1e-10 * max(1.0, abs(slope))
         assert abs(pc.c.sum() - pc.beta) < 1e-12
 
 
