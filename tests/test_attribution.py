@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd
@@ -264,3 +264,16 @@ def test_pc1_loadings_empty_on_short_or_nan_window() -> None:
     win = _returns_window()
     win.iloc[5, 0] = np.nan
     assert pc1_loadings(win).empty
+
+
+def test_pc1_loadings_zero_variance_asset_keeps_loadings() -> None:
+    win = _returns_window()
+    win["E__FI"] = 0.0  # flat price: zero variance, corr undefined for this row
+    out = pc1_loadings(win).set_index("series")
+    assert len(out) == 5
+    assert abs(out["pc1_load_sq"].sum() - 1.0) < 1e-10
+    assert abs(out["var_share"].sum() - 1.0) < 1e-10
+    assert float(cast(Any, out.at["E__FI", "pc1_load_sq"])) < 1e-12
+    assert float(cast(Any, out.at["E__FI", "var_share"])) == 0.0
+    assert np.isnan(float(cast(Any, out.at["E__FI", "row_mean_corr"])))
+    assert np.isfinite(float(cast(Any, out.at["A__Eq", "row_mean_corr"])))

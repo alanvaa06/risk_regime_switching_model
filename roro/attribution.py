@@ -12,6 +12,7 @@ DailyPanel the slope is fitted on; regression.py is never modified.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import asdict, dataclass
 from typing import Any, Literal, cast
 
@@ -264,7 +265,10 @@ def pc1_loadings(window_returns: pd.DataFrame) -> pd.DataFrame:
     """Per-asset PC1 loading^2 (sums to 1), variance share (sums to 1), decoupling, row-mean corr.
 
     Same window/covariance as roro/correlation.py. Columns that are entirely NaN are
-    dropped; any remaining NaN makes the covariance undefined -> empty frame.
+    dropped; any remaining NaN in the returns makes the covariance undefined -> empty
+    frame. A zero-variance asset keeps its loading/variance share but has NaN
+    row_mean_corr. Loadings assume a well-separated top eigenvalue; under near-ties the
+    PC1 eigenvector is not unique.
     """
     empty = pd.DataFrame(columns=list(PC1_COLUMNS))
     arr = window_returns.to_numpy(dtype=np.float64)
@@ -273,10 +277,11 @@ def pc1_loadings(window_returns: pd.DataFrame) -> pd.DataFrame:
     cols = [c for c, m in zip(window_returns.columns, mask, strict=True) if m]
     if arr.shape[0] < _MIN_OBS_PC1 or arr.shape[1] < _MIN_COLS_PC1:
         return empty
-    with np.errstate(invalid="ignore", divide="ignore"):
+    with warnings.catch_warnings(), np.errstate(invalid="ignore", divide="ignore"):
+        warnings.simplefilter("ignore", RuntimeWarning)
         cov = np.cov(arr, rowvar=False)
         corr = np.corrcoef(arr, rowvar=False)
-    if not (np.all(np.isfinite(cov)) and np.all(np.isfinite(corr))):
+    if not np.all(np.isfinite(cov)):
         return empty
     trace = float(np.trace(cov))
     if trace <= 0.0:
@@ -285,8 +290,11 @@ def pc1_loadings(window_returns: pd.DataFrame) -> pd.DataFrame:
     v1 = eigvecs[:, -1]
     load_sq = v1**2
     var_share = np.diag(cov) / trace
-    n = corr.shape[0]
-    row_mean = (corr.sum(axis=1) - 1.0) / float(n - 1)
+    off_diag = corr.copy()
+    np.fill_diagonal(off_diag, np.nan)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # all-NaN rows -> NaN mean
+        row_mean = np.nanmean(off_diag, axis=1)
     df = pd.DataFrame(
         {
             "series": [str(c) for c in cols],
