@@ -5,6 +5,7 @@ from __future__ import annotations
 import pandas as pd
 
 from roro.alerts import detect_alerts
+from roro.attribution import compute_attribution
 from roro.classify import classify
 from roro.config import EngineConfig
 from roro.correlation import compute_correlation_panel
@@ -23,7 +24,15 @@ from roro.regression import compute_beta_by_segment
 from roro.returns import daily_log_returns, ewma_vol, total_return_3m
 from roro.segments import partition
 from roro.tripwire import compute_tripwire_signal
-from roro.types import ReturnsFrame, RunResult, ValidationFrame, VolFrame
+from roro.types import (
+    HmmRegimeFrame,
+    JmRegimeFrame,
+    RegimeFrame,
+    ReturnsFrame,
+    RunResult,
+    ValidationFrame,
+    VolFrame,
+)
 from roro.validation import (
     compute_internal_consistency,
     compute_rolling_external_corr,
@@ -107,6 +116,29 @@ def run(
         else None
     )
 
+    # 5d) Exact per-asset attribution of the slope (on by default; adds artifacts only).
+    attribution = None
+    if cfg.attribution_enabled:
+        anchor_labels, source_warning = _anchor_labels(
+            cfg.attribution_label_source, regime=regime, regime_hmm=regime_hmm, regime_jm=regime_jm
+        )
+        if source_warning:
+            warnings.append(source_warning)
+        attribution = compute_attribution(
+            cfg=cfg,
+            dates=eq_index,
+            cuts=cuts,
+            equity_returns_3m=eq_ret,
+            fi_returns_3m=fi_ret,
+            equity_vol=eq_vol,
+            fi_vol=fi_vol,
+            daily_log_returns_eq=eq_daily,
+            daily_log_returns_fi=fi_daily,
+            beta=beta,
+            regime=regime,
+            anchor_labels=anchor_labels,
+        )
+
     # 6) Cross-sectional correlation panel (avg pairwise + PC1 variance share).
     correlation = compute_correlation_panel(
         daily_log_returns_eq=eq_daily,
@@ -152,6 +184,8 @@ def run(
         validation=validation,
         regime_hmm=regime_hmm,
         regime_jm=regime_jm,
+        attribution=attribution,
+        top1_alert=cfg.attribution_top1_alert,
     )
 
     # 10) Fingerprint inputs + assemble the RunResult.
@@ -169,6 +203,7 @@ def run(
         regime=regime,
         regime_hmm=regime_hmm,
         regime_jm=regime_jm,
+        attribution=attribution,
         correlation=correlation,
         validation=validation,
         tripwire=tripwire,
@@ -186,3 +221,27 @@ def run(
         force=force,
     )
     return result
+
+
+def _anchor_labels(
+    source: str,
+    *,
+    regime: RegimeFrame,
+    regime_hmm: HmmRegimeFrame | None,
+    regime_jm: JmRegimeFrame | None,
+) -> tuple[pd.DataFrame, str | None]:
+    """Label frame (date x cut) that anchors the attribution waterfall.
+
+    Falls back to the percentile tercile with a warning when the requested overlay
+    is not enabled or the source name is unknown.
+    """
+    if source == "hmm" and regime_hmm is not None:
+        return regime_hmm.label, None
+    if source == "jm" and regime_jm is not None:
+        return regime_jm.label, None
+    if source == "percentile":
+        return regime.tercile, None
+    return (
+        regime.tercile,
+        f"attribution_label_source='{source}' unavailable; anchors use percentile tercile",
+    )
