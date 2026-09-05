@@ -10,7 +10,15 @@ from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 from hypothesis.extra import numpy as hnp
 
-from roro.attribution import DELTA_COLUMNS, attribute_delta, attribute_panel, contributions
+from roro.attribution import (
+    DELTA_COLUMNS,
+    ConcentrationRow,
+    attribute_delta,
+    attribute_panel,
+    concentration,
+    contributions,
+    rank_against_prior,
+)
 from roro.regression import DailyPanel, _wls_slope
 from roro.segments import ASSET_EQ, ASSET_FI, SeriesId
 
@@ -160,3 +168,35 @@ def test_delta_empty_when_either_beta_nan() -> None:
     rows, beta = attribute_panel(p, weighting="eq", min_n=3)
     out = attribute_delta(rows, [], beta_t=beta, beta_a=float("nan"))
     assert out.empty and list(out.columns) == list(DELTA_COLUMNS)
+
+
+def test_concentration_bounds_and_top1() -> None:
+    vols = np.array([0.05, 0.10, 0.30, 0.90])
+    rets = np.array([0.00, 0.01, -0.02, 0.40])
+    p = _panel(vols, rets, np.ones(4))
+    pc = contributions(p, weighting="eq", min_n=3)
+    assert pc is not None
+    row = concentration(p, pc, weighting="eq", min_n=3)
+    assert isinstance(row, ConcentrationRow)
+    assert row.top1_series == "C03__Eq"
+    assert 0.25 <= row.hhi <= 1.0
+    assert row.top1_share <= row.top5_share <= 1.0 + 1e-12
+    # leave-one-out slope drops the dominant asset
+    assert np.isfinite(row.beta_ex_top1)
+    assert abs(row.beta_ex_top1) < abs(pc.beta)
+
+
+def test_concentration_beta_ex_top1_nan_when_remaining_below_min_n() -> None:
+    p = _panel(np.array([0.1, 0.2, 0.3]), np.array([0.0, 0.1, 0.5]), np.ones(3))
+    pc = contributions(p, weighting="eq", min_n=3)
+    assert pc is not None
+    row = concentration(p, pc, weighting="eq", min_n=3)
+    assert np.isnan(row.beta_ex_top1)
+
+
+def test_rank_against_prior_mirrors_classifier() -> None:
+    window = np.array([0.1, 0.3, 0.2, np.nan, 0.5])  # last value = today
+    # classifier: (count(window <= today) - 1) / (len - 1) = (4 - 1) / 4 = 0.75
+    assert abs(rank_against_prior(window, 0.5) - 0.75) < 1e-12
+    assert abs(rank_against_prior(window, 0.0) - 0.0) < 1e-12
+    assert np.isnan(rank_against_prior(np.array([0.5]), 0.5))

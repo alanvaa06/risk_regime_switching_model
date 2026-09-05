@@ -184,3 +184,70 @@ def attribute_delta(
             }
         )
     return pd.DataFrame(out, columns=list(DELTA_COLUMNS))
+
+
+_TOP_N: int = 5
+
+
+@dataclass(frozen=True)
+class ConcentrationRow:
+    hhi: float
+    top1_series: str
+    top1_share: float
+    top5_share: float
+    beta_ex_top1: float
+
+
+_EMPTY_CONCENTRATION = ConcentrationRow(
+    hhi=float("nan"), top1_series="", top1_share=float("nan"),
+    top5_share=float("nan"), beta_ex_top1=float("nan"),
+)
+
+
+def _panel_without(panel: DailyPanel, index: int) -> DailyPanel:
+    keep = [i for i in range(len(panel.series)) if i != index]
+    return DailyPanel(
+        date=panel.date,
+        series=tuple(panel.series[i] for i in keep),
+        returns=panel.returns[keep],
+        vols=panel.vols[keep],
+        weights=panel.weights[keep],
+    )
+
+
+def concentration(
+    panel: DailyPanel, pc: PanelContributions, *, weighting: Weighting, min_n: int
+) -> ConcentrationRow:
+    """HHI of |c|, top-1/top-5 shares, and the slope re-estimated without the top-1 asset.
+
+    Ties in |c| resolve by panel order (stable argsort) -> deterministic.
+    """
+    abs_c = np.abs(pc.c)
+    total = float(abs_c.sum())
+    if total <= 0.0:
+        return _EMPTY_CONCENTRATION
+    a = abs_c / total
+    order = np.argsort(-abs_c, kind="stable")
+    top1 = int(order[0])
+    ex = contributions(_panel_without(panel, top1), weighting=weighting, min_n=min_n)
+    return ConcentrationRow(
+        hhi=float(np.sum(a**2)),
+        top1_series=series_key(panel.series[top1]),
+        top1_share=float(a[top1]),
+        top5_share=float(a[order[:_TOP_N]].sum()),
+        beta_ex_top1=ex.beta if ex is not None else float("nan"),
+    )
+
+
+def rank_against_prior(window: FloatArray, value: float) -> float:
+    """Percentile of `value` against the window's prior values (window[-1] is today).
+
+    Mirrors classify.rolling_percentile: count(prior <= value) / (len(window) - 1),
+    NaN comparisons count as False. NaN when there is no prior history.
+    """
+    prior = window[:-1]
+    if prior.size == 0:
+        return float("nan")
+    with np.errstate(invalid="ignore"):
+        hits = int(np.sum(prior <= value))
+    return float(hits) / float(prior.size)
