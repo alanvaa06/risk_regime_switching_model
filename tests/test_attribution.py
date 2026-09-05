@@ -413,3 +413,82 @@ def test_compute_attribution_history_global_flag(tiny_xlsx: Path, tmp_path: Path
     beta = inputs["beta"].by_segment["global"].cap_wtd["beta"]
     common = row_sums.dropna().index
     assert np.allclose(row_sums.loc[common], beta.loc[common], atol=1e-10)
+
+
+def test_concentration_history_fragility_fires_when_top1_moves_bucket() -> None:
+    """Hand-built cut: dropping the dominant asset must move the tercile bucket."""
+    from roro.attribution import _concentration_history  # noqa: PLC0415
+
+    dates = pd.bdate_range("2024-01-01", periods=30)
+    n = 8
+    rng = np.random.default_rng(3)
+    vols = np.linspace(0.05, 0.40, n)
+    base_rets = 0.02 + 0.10 * vols + rng.normal(0.0, 0.002, n)
+    series = tuple(
+        SeriesId(country=f"C{i:02d}", segment="DM", asset_class=ASSET_EQ, mcap=1.0)
+        for i in range(n)
+    )
+
+    def panel_at(d: pd.Timestamp) -> DailyPanel:
+        rets = base_rets.copy()
+        if d == dates[-1]:
+            rets[-1] = 1.5  # today: the highest-vol asset explodes -> it dominates beta
+        return DailyPanel(date=d, series=series, returns=rets, vols=vols, weights=np.ones(n))
+
+    # trailing cap-beta window: calm history, spike today
+    beta_values = np.full(len(dates), 0.10)
+    beta_values[-1] = 3.0
+    # calm days: beta_ex_top1 always ranks at the bottom of the (flat) beta_values
+    # history, i.e. pct_ex_top1 == 0.0 (Risk-off) -> pct_today must land in the same
+    # tercile there, or every calm day would spuriously flag as fragile too.
+    pct_today_all = np.full(len(dates), 0.2)
+    pct_today_all[-1] = 1.0  # today's beta is top of its own history -> Risk-on
+    cfg = EngineConfig(data_path=Path("d.xlsx"), output_dir=Path("o"),
+                       percentile_window_years=1, min_n_per_cut=3)
+    rows, hist = _concentration_history(
+        "global", panel_at, dates=dates, beta_values=beta_values,
+        pct_today_all=pct_today_all, cfg=cfg, collect_history=False,
+    )
+    assert hist == {}
+    last_cap = [r for r in rows if r["date"] == dates[-1] and r["weighting"] == "cap"][-1]
+    assert last_cap["top1_series"] == "C07__Eq"
+    assert last_cap["fragile_flag"] is True
+    window = beta_values[-(cfg.percentile_window_years * 252):]
+    expected = rank_against_prior(window, float(last_cap["beta_ex_top1"]))
+    assert abs(float(last_cap["pct_ex_top1"]) - expected) < 1e-12
+    # dates[0] has no prior history (pct_ex_top1 is NaN there); pick a calm day with a
+    # real prior window instead.
+    calm = [r for r in rows if r["date"] == dates[10] and r["weighting"] == "cap"][-1]
+    assert calm["fragile_flag"] is False
+
+
+def test_compute_attribution_edges_fixed_horizon_and_missing_anchor_cut(
+    tiny_xlsx: Path, tmp_path: Path
+) -> None:
+    cfg = replace(_tiny_cfg(tiny_xlsx, tmp_path), attribution_fixed_horizon_days=10_000)
+    inputs = _attribution_inputs(tiny_xlsx, cfg)
+    inputs["anchor_labels"] = inputs["anchor_labels"].drop(columns=["global"])
+    af = compute_attribution(cfg=cfg, **inputs)
+    # fixed horizon beyond history -> no 'fixed' rows; global has no label column -> no anchor
+    assert not (af.delta["horizon"] == "fixed").any()
+    assert af.anchors["global"] is None
+    assert not ((af.delta["cut"] == "global") & (af.delta["horizon"] == "anchor")).any()
+
+
+def test_compute_attribution_empty_frames_keep_columns(tiny_xlsx: Path, tmp_path: Path) -> None:
+    from roro.attribution import (  # noqa: PLC0415
+        CONCENTRATION_COLUMNS,
+        DELTA_COLUMNS,
+        DELTA_META_COLUMNS,
+        LEVEL_COLUMNS,
+        PC1_COLUMNS,
+        ROLLUP_COLUMNS,
+    )
+
+    cfg = replace(_tiny_cfg(tiny_xlsx, tmp_path), min_n_per_cut=1_000)  # every cut degenerate
+    af = compute_attribution(cfg=cfg, **_attribution_inputs(tiny_xlsx, cfg))
+    assert af.level.empty and list(af.level.columns) == ["date", "cut", "weighting", *LEVEL_COLUMNS]
+    assert af.delta.empty and list(af.delta.columns) == [*DELTA_META_COLUMNS, *DELTA_COLUMNS]
+    assert af.rollup.empty and list(af.rollup.columns) == list(ROLLUP_COLUMNS)
+    assert af.concentration.empty and list(af.concentration.columns) == list(CONCENTRATION_COLUMNS)
+    assert list(af.pc1.columns) == ["date", "cut", *PC1_COLUMNS]

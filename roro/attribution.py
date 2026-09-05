@@ -235,7 +235,9 @@ def concentration(
     a = abs_c / total
     order = np.argsort(-abs_c, kind="stable")
     top1 = int(order[0])
-    ex = contributions(_panel_without(panel, top1), weighting=weighting, min_n=min_n)
+    # Sensitivity probe on an already-published slope, not an independently published
+    # estimate, so the publication threshold min_n_per_cut does not apply here.
+    ex = contributions(_panel_without(panel, top1), weighting=weighting, min_n=_MIN_PANEL)
     return ConcentrationRow(
         hhi=float(np.sum(a**2)),
         top1_series=series_key(panel.series[top1]),
@@ -397,13 +399,17 @@ def _window_returns(
     end: pd.Timestamp,
     window: int,
 ) -> pd.DataFrame:
-    """Same merge as correlation.compute_correlation_panel, sliced to the trailing window."""
+    """Same merge as correlation.compute_correlation_panel, sliced to the trailing window;
+    empty when fewer than `window` rows are available (correlation.py emits NaN there).
+    """
     cols_eq = [s.country for s in series if s.asset_class == ASSET_EQ]
     cols_fi = [s.country for s in series if s.asset_class == ASSET_FI]
     eq = daily_log_returns_eq[[c for c in cols_eq if c in daily_log_returns_eq.columns]]
     fi = daily_log_returns_fi[[c for c in cols_fi if c in daily_log_returns_fi.columns]]
     merged = pd.concat([eq.add_suffix("__Eq"), fi.add_suffix("__FI")], axis=1)
     merged = merged.loc[:end]
+    if len(merged) < window:
+        return merged.iloc[:0]
     return merged.iloc[-window:]
 
 
@@ -415,15 +421,16 @@ def _concentration_history(
     beta_values: FloatArray,
     pct_today_all: FloatArray,
     cfg: EngineConfig,
+    collect_history: bool,
 ) -> tuple[list[dict[str, object]], dict[pd.Timestamp, dict[str, float]]]:
     """Full-history concentration rows for one cut (both weightings; fragility on cap only).
 
     The second element is the date -> {series: contribution} history of cap-weighted
-    contributions; it is populated only for the global cut when the config asks for it.
+    contributions; it is populated only when `collect_history` is True (the caller
+    decides that policy: global cut and cfg.attribution_history_global).
     """
     min_n = cfg.min_n_per_cut
     pct_window = cfg.percentile_window_years * 252
-    want_history = cut == "global" and cfg.attribution_history_global
     rows: list[dict[str, object]] = []
     hist_c: dict[pd.Timestamp, dict[str, float]] = {}
     for pos, d in enumerate(dates):
@@ -451,7 +458,7 @@ def _concentration_history(
                     "pct_today": pct_today, "pct_ex_top1": pct_ex, "fragile_flag": fragile,
                 }
             )
-            if weighting == "cap" and want_history:
+            if weighting == "cap" and collect_history:
                 hist_c[pd.Timestamp(d)] = {
                     series_key(s): float(pc.c[i]) for i, s in enumerate(panel.series)
                 }
@@ -545,12 +552,13 @@ def compute_attribution(
             fi_returns_3m=fi_returns_3m, equity_vol=equity_vol, fi_vol=fi_vol,
         )
 
+        collect = cut == "global" and cfg.attribution_history_global
         rows, hist_c = _concentration_history(
             cut, panel_at, dates=dates, beta_values=beta_values,
-            pct_today_all=pct_today_all, cfg=cfg,
+            pct_today_all=pct_today_all, cfg=cfg, collect_history=collect,
         )
         conc_rows.extend(rows)
-        if cut == "global" and cfg.attribution_history_global:
+        if collect and hist_c:
             history_global = pd.DataFrame.from_dict(hist_c, orient="index").sort_index()
             history_global = history_global.reindex(sorted(history_global.columns), axis=1)
             history_global.index.name = "date"
