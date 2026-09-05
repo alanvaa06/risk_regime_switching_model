@@ -24,8 +24,9 @@ from roro.segments import LATAM_COUNTRIES, SeriesId
 FloatArray = np.ndarray[Any, np.dtype[np.float64]]
 Weighting = Literal["cap", "eq"]
 
-WEIGHTINGS: tuple[Weighting, ...] = ("cap", "eq")
+WEIGHTINGS: tuple[Weighting, ...] = ("cap", "eq")  # iterated by compute_attribution (Task 8)
 _MIN_PANEL: int = 3  # below this a slope + leave-one-out are not meaningful
+_D_REL_FLOOR: float = 8.0 * float(np.finfo(np.float64).eps)
 
 LEVEL_COLUMNS: tuple[str, ...] = (
     "series", "block", "latam", "vol", "ret3m", "weight", "leverage",
@@ -82,14 +83,12 @@ def contributions(
     w = _normalized_weights(panel, weighting)
     x = panel.vols
     y = panel.returns
-    if float(np.ptp(x)) <= 0.0:
-        # Exact-duplicate vols: D is mathematically 0 (all weights are positive), but
-        # summing w * (x - xbar) ** 2 in floating point can yield a tiny nonzero value
-        # from rounding in xbar rather than real dispersion. Guard on x directly.
-        return None
     xbar = float(np.sum(w * x))
     d = float(np.sum(w * (x - xbar) ** 2))
-    if d <= 0.0:
+    # D is the weighted variance of vol. Below ~8 ulp of the weighted second moment it is
+    # floating-point noise, not dispersion: the slope is undefined and leverage explodes.
+    scale = float(np.sum(w * x**2))
+    if scale <= 0.0 or d <= _D_REL_FLOOR * scale:
         return None
     h = w * (x - xbar) / d
     c = h * y

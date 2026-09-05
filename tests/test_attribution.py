@@ -6,7 +6,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from hypothesis import given, settings
+from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 from hypothesis.extra import numpy as hnp
 
@@ -17,6 +17,9 @@ from roro.segments import ASSET_EQ, ASSET_FI, SeriesId
 FloatArray = np.ndarray[Any, np.dtype[np.float64]]
 
 _DATE = pd.Timestamp("2024-01-01")
+# Comfortably above the production degeneracy floor so the exactness properties below
+# cover well-conditioned panels only; the near-degenerate boundary has its own explicit test.
+_MIN_PTP: float = 1e-4
 
 
 def _panel(
@@ -46,10 +49,13 @@ def _finite(n: int, lo: float, hi: float) -> st.SearchStrategy[FloatArray]:
 @given(
     vols=_finite(12, 0.01, 0.9), rets=_finite(12, -0.5, 0.5), w=_finite(12, 0.1, 100.0)
 )
-@settings(max_examples=50, deadline=None)
+@settings(
+    max_examples=50,
+    deadline=None,
+    suppress_health_check=[HealthCheck.filter_too_much, HealthCheck.too_slow],
+)
 def test_contributions_sum_to_wls_slope(vols: FloatArray, rets: FloatArray, w: FloatArray) -> None:
-    if np.ptp(vols) < 1e-6:
-        return  # degenerate cross-section: no slope to attribute
+    assume(float(np.ptp(vols)) >= _MIN_PTP)
     p = _panel(vols, rets, w)
     for weighting, wvec in (("cap", w), ("eq", np.ones(12))):
         pc = contributions(p, weighting=weighting, min_n=3)  # type: ignore[arg-type]
@@ -59,10 +65,13 @@ def test_contributions_sum_to_wls_slope(vols: FloatArray, rets: FloatArray, w: F
 
 
 @given(vols=_finite(12, 0.01, 0.9), w=_finite(12, 0.1, 100.0))
-@settings(max_examples=50, deadline=None)
+@settings(
+    max_examples=50,
+    deadline=None,
+    suppress_health_check=[HealthCheck.filter_too_much, HealthCheck.too_slow],
+)
 def test_leverage_identities(vols: FloatArray, w: FloatArray) -> None:
-    if np.ptp(vols) < 1e-6:
-        return
+    assume(float(np.ptp(vols)) >= _MIN_PTP)
     p = _panel(vols, np.zeros(12), w)
     pc = contributions(p, weighting="cap", min_n=3)
     assert pc is not None
@@ -97,3 +106,15 @@ def test_attribute_panel_empty_when_degenerate() -> None:
     p = _panel(np.array([0.1, 0.2]), np.array([0.0, 0.1]), np.array([1.0, 1.0]))
     rows, beta = attribute_panel(p, weighting="cap", min_n=3)
     assert rows == [] and np.isnan(beta)
+
+
+def test_contributions_none_for_near_duplicate_vols() -> None:
+    rng = np.random.default_rng(7)
+    vols = 0.2 + rng.normal(0.0, 1e-10, 8)
+    rets = rng.normal(0.0, 0.05, 8)
+    p = _panel(vols, rets, np.ones(8))
+    assert contributions(p, weighting="cap", min_n=3) is None
+    assert contributions(p, weighting="eq", min_n=3) is None
+    # a genuinely dispersed panel of the same size is fine
+    ok = _panel(np.linspace(0.05, 0.5, 8), rets, np.ones(8))
+    assert contributions(ok, weighting="cap", min_n=3) is not None
