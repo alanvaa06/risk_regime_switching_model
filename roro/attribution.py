@@ -244,10 +244,10 @@ def rank_against_prior(window: FloatArray, value: float) -> float:
 
     Mirrors classify.rolling_percentile: count(prior <= value) / (len(window) - 1),
     NaN comparisons count as False. NaN when there is no prior history.
+    Differs from rolling_percentile only when there is no prior history: NaN here, 0.0 there.
     """
     prior = window[:-1]
     if prior.size == 0:
         return float("nan")
-    with np.errstate(invalid="ignore"):
-        hits = int(np.sum(prior <= value))
+    hits = int(np.sum(prior <= value))
     return float(hits) / float(prior.size)

@@ -11,6 +11,7 @@ from hypothesis import strategies as st
 from hypothesis.extra import numpy as hnp
 
 from roro.attribution import (
+    _EMPTY_CONCENTRATION,
     DELTA_COLUMNS,
     ConcentrationRow,
     attribute_delta,
@@ -200,3 +201,25 @@ def test_rank_against_prior_mirrors_classifier() -> None:
     assert abs(rank_against_prior(window, 0.5) - 0.75) < 1e-12
     assert abs(rank_against_prior(window, 0.0) - 0.0) < 1e-12
     assert np.isnan(rank_against_prior(np.array([0.5]), 0.5))
+
+
+def test_concentration_zero_total_returns_sentinel() -> None:
+    p = _panel(np.array([0.1, 0.2, 0.3, 0.4]), np.zeros(4), np.ones(4))
+    pc = contributions(p, weighting="eq", min_n=3)
+    assert pc is not None
+    assert concentration(p, pc, weighting="eq", min_n=3) == _EMPTY_CONCENTRATION
+
+
+def test_concentration_tie_break_is_lowest_index() -> None:
+    # symmetric vols around xbar with equal |ret| -> |c| ties between C00 and C03.
+    # Uses integer vols (exactly representable in binary) so the tie is bit-exact:
+    # with 0.1/0.2/0.3/0.4 the leverage h0/h3 are not exact negatives of each other
+    # (decimal fractions aren't exact in binary), so abs(c[0]) and abs(c[3]) differ
+    # by ~5e-17 and the "tie" silently resolves by magnitude instead of index.
+    vols = np.array([1.0, 2.0, 3.0, 4.0])
+    rets = np.array([-0.1, 0.0, 0.0, 0.1])
+    p = _panel(vols, rets, np.ones(4))
+    pc = contributions(p, weighting="eq", min_n=3)
+    assert pc is not None
+    assert abs(abs(pc.c[0]) - abs(pc.c[3])) < 1e-15
+    assert concentration(p, pc, weighting="eq", min_n=3).top1_series == "C00__Eq"
