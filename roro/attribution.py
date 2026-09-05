@@ -251,3 +251,50 @@ def rank_against_prior(window: FloatArray, value: float) -> float:
         return float("nan")
     hits = int(np.sum(prior <= value))
     return float(hits) / float(prior.size)
+
+
+PC1_COLUMNS: tuple[str, ...] = (
+    "series", "pc1_load_sq", "var_share", "decoupling", "row_mean_corr",
+)
+_MIN_OBS_PC1: int = 3
+_MIN_COLS_PC1: int = 2
+
+
+def pc1_loadings(window_returns: pd.DataFrame) -> pd.DataFrame:
+    """Per-asset PC1 loading^2 (sums to 1), variance share (sums to 1), decoupling, row-mean corr.
+
+    Same window/covariance as roro/correlation.py. Columns that are entirely NaN are
+    dropped; any remaining NaN makes the covariance undefined -> empty frame.
+    """
+    empty = pd.DataFrame(columns=list(PC1_COLUMNS))
+    arr = window_returns.to_numpy(dtype=np.float64)
+    mask = ~np.all(np.isnan(arr), axis=0)
+    arr = arr[:, mask]
+    cols = [c for c, m in zip(window_returns.columns, mask, strict=True) if m]
+    if arr.shape[0] < _MIN_OBS_PC1 or arr.shape[1] < _MIN_COLS_PC1:
+        return empty
+    with np.errstate(invalid="ignore", divide="ignore"):
+        cov = np.cov(arr, rowvar=False)
+        corr = np.corrcoef(arr, rowvar=False)
+    if not (np.all(np.isfinite(cov)) and np.all(np.isfinite(corr))):
+        return empty
+    trace = float(np.trace(cov))
+    if trace <= 0.0:
+        return empty
+    _, eigvecs = np.linalg.eigh(cov)  # ascending eigenvalues; last column = PC1
+    v1 = eigvecs[:, -1]
+    load_sq = v1**2
+    var_share = np.diag(cov) / trace
+    n = corr.shape[0]
+    row_mean = (corr.sum(axis=1) - 1.0) / float(n - 1)
+    df = pd.DataFrame(
+        {
+            "series": [str(c) for c in cols],
+            "pc1_load_sq": load_sq,
+            "var_share": var_share,
+            "decoupling": var_share - load_sq,
+            "row_mean_corr": row_mean,
+        },
+        columns=list(PC1_COLUMNS),
+    )
+    return df.sort_values("series").reset_index(drop=True)

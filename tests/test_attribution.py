@@ -13,11 +13,13 @@ from hypothesis.extra import numpy as hnp
 from roro.attribution import (
     _EMPTY_CONCENTRATION,
     DELTA_COLUMNS,
+    PC1_COLUMNS,
     ConcentrationRow,
     attribute_delta,
     attribute_panel,
     concentration,
     contributions,
+    pc1_loadings,
     rank_against_prior,
 )
 from roro.regression import DailyPanel, _wls_slope
@@ -223,3 +225,42 @@ def test_concentration_tie_break_is_lowest_index() -> None:
     assert pc is not None
     assert abs(abs(pc.c[0]) - abs(pc.c[3])) < 1e-15
     assert concentration(p, pc, weighting="eq", min_n=3).top1_series == "C00__Eq"
+
+
+def _returns_window(seed: int = 0, n_obs: int = 60) -> pd.DataFrame:
+    rng = np.random.default_rng(seed)
+    common = rng.normal(0, 0.01, n_obs)
+    data = {
+        "A__Eq": common + rng.normal(0, 0.002, n_obs),
+        "B__Eq": common + rng.normal(0, 0.002, n_obs),
+        "C__FI": -0.2 * common + rng.normal(0, 0.004, n_obs),
+        "D__FI": rng.normal(0, 0.006, n_obs),  # independent -> decoupled
+    }
+    return pd.DataFrame(data, index=pd.bdate_range("2024-01-01", periods=n_obs))
+
+
+def test_pc1_loadings_identities() -> None:
+    out = pc1_loadings(_returns_window())
+    assert list(out.columns) == list(PC1_COLUMNS)
+    assert abs(out["pc1_load_sq"].sum() - 1.0) < 1e-10
+    assert abs(out["var_share"].sum() - 1.0) < 1e-10
+    assert abs(out["decoupling"].sum()) < 1e-10
+    assert (out["row_mean_corr"].abs() <= 1.0).all()
+    assert list(out["series"]) == sorted(out["series"])
+
+
+def test_pc1_loadings_sign_flip_invariant_and_decoupled_asset() -> None:
+    win = _returns_window()
+    out = pc1_loadings(win)
+    flipped = pc1_loadings(-win)  # eigenvectors may flip sign; squares must not
+    assert np.allclose(out["pc1_load_sq"], flipped["pc1_load_sq"])
+    by = out.set_index("series")["decoupling"]
+    assert float(by.loc["D__FI"]) > float(by.loc["A__Eq"])
+
+
+def test_pc1_loadings_empty_on_short_or_nan_window() -> None:
+    win = _returns_window(n_obs=2)
+    assert pc1_loadings(win).empty
+    win = _returns_window()
+    win.iloc[5, 0] = np.nan
+    assert pc1_loadings(win).empty
