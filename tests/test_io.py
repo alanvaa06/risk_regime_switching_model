@@ -9,6 +9,7 @@ from roro.config import EngineConfig
 from roro.io import _write_regime_jm, load_panel, load_prices, write_run
 from roro.types import (
     AlertSet,
+    AttributionFrame,
     BetaBySegment,
     BetaFrame,
     CorrelationFrame,
@@ -186,3 +187,90 @@ def test_write_regime_jm_columns_and_rows(tmp_path: Path) -> None:
                                 "p_transitional", "p_risk_on", "confidence",
                                 "cold_start", "thin_cut"]
     assert len(df) == 3
+
+
+def _result_with_attribution(out_dir: Path) -> RunResult:
+    base = _empty_result(out_dir)
+    d = pd.Timestamp("2026-05-26")
+    level = pd.DataFrame(
+        [
+            {"date": d, "cut": "global", "weighting": "cap", "series": "A__Eq", "block": "DM_Eq",
+             "latam": False, "vol": 0.2, "ret3m": 0.1, "weight": 0.5, "leverage": 1.0,
+             "contribution": 0.1, "share": 0.5, "quadrant": "HI/+", "xbar": 0.15, "ybar": 0.05},
+            {"date": d, "cut": "global", "weighting": "cap", "series": "B__FI", "block": "DM_FI",
+             "latam": False, "vol": 0.1, "ret3m": -0.1, "weight": 0.5, "leverage": -1.0,
+             "contribution": 0.1, "share": 0.5, "quadrant": "LO/-", "xbar": 0.15, "ybar": 0.05},
+        ]
+    )
+    delta = pd.DataFrame(
+        [{"date": d, "cut": "global", "weighting": "cap", "horizon": "fixed",
+          "anchor_date": d - pd.Timedelta(days=90), "label_anchor": "Risk-off",
+          "label_t": "Risk-on", "beta_anchor": 0.05, "beta_t": 0.2, "series": "A__Eq",
+          "block": "DM_Eq", "effect_return": 0.1, "effect_position": 0.03,
+          "effect_interaction": 0.02, "effect_universe": 0.0, "delta_total": 0.15}]
+    )
+    rollup = pd.DataFrame(
+        [{"date": d, "cut": "global", "weighting": "cap", "group_kind": "block",
+          "group": "DM_Eq", "contribution_sum": 0.1, "n": 1}]
+    )
+    conc = pd.DataFrame(
+        [{"date": d, "cut": "global", "weighting": "cap", "n": 2, "beta": 0.2, "hhi": 0.5,
+          "top1_series": "A__Eq", "top1_share": 0.5, "top5_share": 1.0, "beta_ex_top1": 0.1,
+          "pct_today": 0.8, "pct_ex_top1": 0.5, "fragile_flag": True}]
+    )
+    pc1 = pd.DataFrame(
+        [{"date": d, "cut": "global", "series": "A__Eq", "pc1_load_sq": 0.6, "var_share": 0.5,
+          "decoupling": -0.1, "row_mean_corr": 0.3}]
+    )
+    af = AttributionFrame(level=level, delta=delta, rollup=rollup, concentration=conc, pc1=pc1,
+                          anchors={"global": d - pd.Timedelta(days=90)})
+    alerts = replace(
+        base.alerts,
+        concentration_alerts=pd.DataFrame(
+            [{"date": d, "segment": "global", "weighting": "cap", "top1_series": "A__Eq",
+              "top1_share": 0.5, "hhi": 0.5, "fragile_flag": True, "trigger": "fragile"}]
+        ),
+    )
+    return replace(base, attribution=af, alerts=alerts)
+
+
+def test_write_run_emits_attribution_artifacts(tmp_path: Path) -> None:
+    out_root = tmp_path / "outputs"
+    path = write_run(_result_with_attribution(out_root), run_date="2026-05-27",
+                     out_dir=out_root, as_of_data_date="2026-05-26")
+    for name in ("attribution.csv", "attribution_delta.csv", "attribution_rollup.csv",
+                 "concentration.csv", "attribution_pc1.csv"):
+        assert (path / name).exists(), name
+    assert not (path / "attribution_history_global.csv").exists()
+    level = pd.read_csv(path / "attribution.csv")
+    assert list(level.columns)[:3] == ["date", "cut", "weighting"]
+    assert len(level) == 2
+    alerts = pd.read_csv(path / "alerts.csv")
+    assert "concentration" in set(alerts["kind"])
+    snap = json.loads((path / "snapshot.json").read_text(encoding="utf-8"))
+    g = snap["attribution"]["global"]
+    assert g["anchor_date"] == "2026-02-25"
+    assert g["top1_series"] == "A__Eq" and g["fragile_flag"] is True
+    assert [x["series"] for x in g["top3"]] == ["A__Eq", "B__FI"]
+
+
+def test_write_run_history_global_when_present(tmp_path: Path) -> None:
+    out_root = tmp_path / "outputs"
+    res = _result_with_attribution(out_root)
+    assert res.attribution is not None
+    hist = pd.DataFrame({"A__Eq": [0.1, 0.2], "B__FI": [0.0, -0.1]},
+                        index=pd.DatetimeIndex(["2026-05-25", "2026-05-26"], name="date"))
+    res = replace(res, attribution=replace(res.attribution, history_global=hist))
+    path = write_run(res, run_date="2026-05-27", out_dir=out_root, as_of_data_date="2026-05-26")
+    back = pd.read_csv(path / "attribution_history_global.csv", index_col="date",
+                       parse_dates=["date"])
+    assert list(back.columns) == ["A__Eq", "B__FI"] and len(back) == 2
+
+
+def test_write_run_no_attribution_artifacts_when_none(tmp_path: Path) -> None:
+    out_root = tmp_path / "outputs"
+    path = write_run(_empty_result(out_root), run_date="2026-05-27", out_dir=out_root,
+                     as_of_data_date="2026-05-26")
+    assert not (path / "attribution.csv").exists()
+    snap = json.loads((path / "snapshot.json").read_text(encoding="utf-8"))
+    assert "attribution" not in snap
