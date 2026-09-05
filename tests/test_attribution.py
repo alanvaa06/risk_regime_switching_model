@@ -460,6 +460,8 @@ def test_concentration_history_fragility_fires_when_top1_moves_bucket() -> None:
     # real prior window instead.
     calm = [r for r in rows if r["date"] == dates[10] and r["weighting"] == "cap"][-1]
     assert calm["fragile_flag"] is False
+    first = [r for r in rows if r["date"] == dates[0] and r["weighting"] == "cap"][-1]
+    assert np.isnan(first["pct_ex_top1"]) and first["fragile_flag"] is False
 
 
 def test_compute_attribution_edges_fixed_horizon_and_missing_anchor_cut(

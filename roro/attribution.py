@@ -446,8 +446,9 @@ def _concentration_history(
             if weighting == "cap" and np.isfinite(row.beta_ex_top1) and np.isfinite(pct_today):
                 window = beta_values[max(0, pos - pct_window + 1) : pos + 1]
                 pct_ex = rank_against_prior(window, row.beta_ex_top1)
-                fragile = bucket_label(pct_ex, cfg.bucket_scheme) != bucket_label(
-                    pct_today, cfg.bucket_scheme
+                fragile = bool(np.isfinite(pct_ex)) and (
+                    bucket_label(pct_ex, cfg.bucket_scheme)
+                    != bucket_label(pct_today, cfg.bucket_scheme)
                 )
             rows.append(
                 {
