@@ -6,6 +6,7 @@ import pandas as pd
 
 from roro.types import (
     AlertSet,
+    AttributionFrame,
     CorrelationFrame,
     HmmRegimeFrame,
     JmRegimeFrame,
@@ -14,6 +15,10 @@ from roro.types import (
 )
 
 _DISAGREEMENT_CORR_THRESHOLD: float = 0.6
+_CONCENTRATION_COLUMNS: list[str] = [
+    "date", "segment", "weighting", "top1_series", "top1_share", "hhi", "fragile_flag", "trigger",
+]
+_DEFAULT_TOP1_ALERT: float = 0.5
 
 
 def detect_alerts(
@@ -23,9 +28,12 @@ def detect_alerts(
     validation: ValidationFrame,
     regime_hmm: HmmRegimeFrame | None = None,
     regime_jm: JmRegimeFrame | None = None,
+    attribution: AttributionFrame | None = None,
+    top1_alert: float = _DEFAULT_TOP1_ALERT,
 ) -> AlertSet:
+    transitions = _bucket_transitions(regime.tercile)
     return AlertSet(
-        bucket_transitions=_bucket_transitions(regime.tercile),
+        bucket_transitions=transitions,
         disagreement_events=_disagreement_events(regime, correlation),
         validation_degradation=_validation_degradation(validation),
         hmm_bucket_transitions=(
@@ -38,7 +46,40 @@ def detect_alerts(
             if regime_jm is not None
             else pd.DataFrame(columns=["date", "segment", "from_bucket", "to_bucket"])
         ),
+        concentration_alerts=(
+            _concentration_alerts(attribution.concentration, transitions, top1_alert=top1_alert)
+            if attribution is not None
+            else pd.DataFrame(columns=_CONCENTRATION_COLUMNS)
+        ),
     )
+
+
+def _concentration_alerts(
+    conc: pd.DataFrame, transitions: pd.DataFrame, *, top1_alert: float
+) -> pd.DataFrame:
+    """Cap-weighted rows where (top1_share > threshold on a bucket-transition day) or fragile."""
+    if conc.empty:
+        return pd.DataFrame(columns=_CONCENTRATION_COLUMNS)
+    cap = conc[conc["weighting"] == "cap"]
+    if transitions.empty:
+        on_transition = pd.Series(False, index=cap.index)
+    else:
+        keys = set(zip(transitions["date"], transitions["segment"], strict=True))
+        on_transition = pd.Series(
+            [(d, s) in keys for d, s in zip(cap["date"], cap["cut"], strict=True)],
+            index=cap.index,
+        )
+    concentrated = cap["top1_share"] > top1_alert
+    fragile = cap["fragile_flag"].astype(bool)
+    hit = cap[(on_transition & concentrated) | fragile].copy()
+    if hit.empty:
+        return pd.DataFrame(columns=_CONCENTRATION_COLUMNS)
+    trig_transition = (on_transition & concentrated).loc[hit.index]
+    hit["trigger"] = ["transition_day" if t else "fragile" for t in trig_transition]
+    hit = hit.rename(columns={"cut": "segment"})
+    return hit[_CONCENTRATION_COLUMNS].sort_values(
+        ["date", "segment"], kind="stable"
+    ).reset_index(drop=True)
 
 
 def _bucket_transitions(tercile: pd.DataFrame) -> pd.DataFrame:
