@@ -72,3 +72,21 @@ def test_jm_config_defaults_and_roundtrip() -> None:
                 "jm_min_history_days", "jm_window", "jm_rolling_window_days",
                 "jm_continuous", "jm_n_init", "jm_max_iter", "jm_tol", "jm_random_seed"):
         assert key in d
+
+
+def test_attribution_config_defaults_and_roundtrip() -> None:
+    cfg = EngineConfig(data_path=Path("d.xlsx"), output_dir=Path("o"))
+    assert cfg.attribution_enabled is True
+    assert cfg.attribution_label_source == "percentile"
+    assert cfg.attribution_anchor_lookback_days == 1260
+    assert cfg.attribution_fixed_horizon_days == 63
+    assert cfg.attribution_top_n == 12
+    assert cfg.attribution_top1_alert == 0.5
+    assert cfg.attribution_history_global is False
+    d = cfg.to_dict()
+    for key in (
+        "attribution_enabled", "attribution_label_source",
+        "attribution_anchor_lookback_days", "attribution_fixed_horizon_days",
+        "attribution_top_n", "attribution_top1_alert", "attribution_history_global",
+    ):
+        assert key in d
