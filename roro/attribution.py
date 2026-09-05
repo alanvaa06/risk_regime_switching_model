@@ -13,14 +13,19 @@ DailyPanel the slope is fitted on; regression.py is never modified.
 from __future__ import annotations
 
 import warnings
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
+from functools import partial
 from typing import Any, Literal, cast
 
 import numpy as np
 import pandas as pd
 
-from roro.regression import DailyPanel
-from roro.segments import LATAM_COUNTRIES, SeriesId
+from roro.classify import bucket_label
+from roro.config import EngineConfig
+from roro.regression import DailyPanel, daily_panel
+from roro.segments import ASSET_EQ, ASSET_FI, LATAM_COUNTRIES, SeriesId
+from roro.types import AttributionFrame, BetaBySegment, RegimeFrame
 
 FloatArray = np.ndarray[Any, np.dtype[np.float64]]
 Weighting = Literal["cap", "eq"]
@@ -319,6 +324,7 @@ def find_anchor(
     Uses only rows <= t (causal). Transitions from NaN/'Unknown' do not count. The
     transition must be at most `max_lookback_days` rows before `t` (the row
     `max_lookback_days` back counts).
+    Assumes labels.index is a sorted DatetimeIndex without duplicates (engine contract).
     """
     hist = labels.loc[:t]
     known = hist.notna() & (hist != _UNKNOWN_LABEL)
@@ -331,3 +337,259 @@ def find_anchor(
     if (len(hist) - 1 - pos) > max_lookback_days:
         return None
     return pd.Timestamp(hist.index[pos - 1])
+
+
+CONCENTRATION_COLUMNS: tuple[str, ...] = (
+    "date", "cut", "weighting", "n", "beta", "hhi", "top1_series", "top1_share",
+    "top5_share", "beta_ex_top1", "pct_today", "pct_ex_top1", "fragile_flag",
+)
+ROLLUP_COLUMNS: tuple[str, ...] = (
+    "date", "cut", "weighting", "group_kind", "group", "contribution_sum", "n",
+)
+DELTA_META_COLUMNS: tuple[str, ...] = (
+    "date", "cut", "weighting", "horizon", "anchor_date", "label_anchor", "label_t",
+    "beta_anchor", "beta_t",
+)
+
+
+def _panel_for(
+    date: pd.Timestamp,
+    series: list[SeriesId],
+    *,
+    equity_returns_3m: pd.DataFrame,
+    fi_returns_3m: pd.DataFrame,
+    equity_vol: pd.DataFrame,
+    fi_vol: pd.DataFrame,
+) -> DailyPanel:
+    return daily_panel(
+        date=date, series=series, equity_returns=equity_returns_3m,
+        fi_returns=fi_returns_3m, equity_vol=equity_vol, fi_vol=fi_vol,
+    )
+
+
+def _rollup(level: pd.DataFrame) -> pd.DataFrame:
+    """Block / quadrant / LatAm sums per (date, cut, weighting) from level rows."""
+    if level.empty:
+        return pd.DataFrame(columns=list(ROLLUP_COLUMNS))
+    parts: list[pd.DataFrame] = []
+    for kind, col in (("block", "block"), ("quadrant", "quadrant")):
+        g = level.groupby(["date", "cut", "weighting", col], sort=True)["contribution"]
+        df = g.agg(contribution_sum="sum", n="count").reset_index()
+        df = df.rename(columns={col: "group"})
+        df.insert(3, "group_kind", kind)
+        parts.append(df)
+    lat = level[level["latam"]]
+    if not lat.empty:
+        g = lat.groupby(["date", "cut", "weighting"], sort=True)["contribution"]
+        df = g.agg(contribution_sum="sum", n="count").reset_index()
+        df.insert(3, "group_kind", "latam")
+        df.insert(4, "group", "LatAm")
+        parts.append(df)
+    out = pd.concat(parts, ignore_index=True)[list(ROLLUP_COLUMNS)]
+    return out.sort_values(["cut", "weighting", "group_kind", "group"]).reset_index(drop=True)
+
+
+def _window_returns(
+    series: list[SeriesId],
+    *,
+    daily_log_returns_eq: pd.DataFrame,
+    daily_log_returns_fi: pd.DataFrame,
+    end: pd.Timestamp,
+    window: int,
+) -> pd.DataFrame:
+    """Same merge as correlation.compute_correlation_panel, sliced to the trailing window."""
+    cols_eq = [s.country for s in series if s.asset_class == ASSET_EQ]
+    cols_fi = [s.country for s in series if s.asset_class == ASSET_FI]
+    eq = daily_log_returns_eq[[c for c in cols_eq if c in daily_log_returns_eq.columns]]
+    fi = daily_log_returns_fi[[c for c in cols_fi if c in daily_log_returns_fi.columns]]
+    merged = pd.concat([eq.add_suffix("__Eq"), fi.add_suffix("__FI")], axis=1)
+    merged = merged.loc[:end]
+    return merged.iloc[-window:]
+
+
+def _concentration_history(
+    cut: str,
+    panel_at: Callable[[pd.Timestamp], DailyPanel],
+    *,
+    dates: pd.DatetimeIndex,
+    beta_values: FloatArray,
+    pct_today_all: FloatArray,
+    cfg: EngineConfig,
+) -> tuple[list[dict[str, object]], dict[pd.Timestamp, dict[str, float]]]:
+    """Full-history concentration rows for one cut (both weightings; fragility on cap only).
+
+    The second element is the date -> {series: contribution} history of cap-weighted
+    contributions; it is populated only for the global cut when the config asks for it.
+    """
+    min_n = cfg.min_n_per_cut
+    pct_window = cfg.percentile_window_years * 252
+    want_history = cut == "global" and cfg.attribution_history_global
+    rows: list[dict[str, object]] = []
+    hist_c: dict[pd.Timestamp, dict[str, float]] = {}
+    for pos, d in enumerate(dates):
+        panel = panel_at(pd.Timestamp(d))
+        for weighting in WEIGHTINGS:
+            pc = contributions(panel, weighting=weighting, min_n=min_n)
+            if pc is None:
+                continue
+            row = concentration(panel, pc, weighting=weighting, min_n=min_n)
+            pct_today = float(pct_today_all[pos])
+            pct_ex = float("nan")
+            fragile = False
+            if weighting == "cap" and np.isfinite(row.beta_ex_top1) and np.isfinite(pct_today):
+                window = beta_values[max(0, pos - pct_window + 1) : pos + 1]
+                pct_ex = rank_against_prior(window, row.beta_ex_top1)
+                fragile = bucket_label(pct_ex, cfg.bucket_scheme) != bucket_label(
+                    pct_today, cfg.bucket_scheme
+                )
+            rows.append(
+                {
+                    "date": pd.Timestamp(d), "cut": cut, "weighting": weighting,
+                    "n": len(panel.series), "beta": pc.beta, "hhi": row.hhi,
+                    "top1_series": row.top1_series, "top1_share": row.top1_share,
+                    "top5_share": row.top5_share, "beta_ex_top1": row.beta_ex_top1,
+                    "pct_today": pct_today, "pct_ex_top1": pct_ex, "fragile_flag": fragile,
+                }
+            )
+            if weighting == "cap" and want_history:
+                hist_c[pd.Timestamp(d)] = {
+                    series_key(s): float(pc.c[i]) for i, s in enumerate(panel.series)
+                }
+    return rows, hist_c
+
+
+def _last_date_snapshot(
+    cut: str,
+    panel_at: Callable[[pd.Timestamp], DailyPanel],
+    *,
+    dates: pd.DatetimeIndex,
+    labels: pd.Series,
+    cfg: EngineConfig,
+) -> tuple[list[pd.DataFrame], list[pd.DataFrame], pd.Timestamp | None]:
+    """Last-date level rows + delta waterfalls (anchor and fixed horizons) for one cut."""
+    min_n = cfg.min_n_per_cut
+    last = pd.Timestamp(dates[-1])
+    level_parts: list[pd.DataFrame] = []
+    delta_parts: list[pd.DataFrame] = []
+    panel_t = panel_at(last)
+    anchor = (
+        find_anchor(labels, last, max_lookback_days=cfg.attribution_anchor_lookback_days)
+        if not labels.empty
+        else None
+    )
+    label_t = str(labels.get(last, _UNKNOWN_LABEL)) if not labels.empty else _UNKNOWN_LABEL
+    fixed_pos = len(dates) - 1 - cfg.attribution_fixed_horizon_days
+    fixed_date = pd.Timestamp(dates[fixed_pos]) if fixed_pos >= 0 else None
+    for weighting in WEIGHTINGS:
+        rows_t, beta_t = attribute_panel(panel_t, weighting=weighting, min_n=min_n)
+        if rows_t:
+            lv = rows_to_frame(rows_t)
+            lv.insert(0, "weighting", weighting)
+            lv.insert(0, "cut", cut)
+            lv.insert(0, "date", last)
+            level_parts.append(lv)
+        for horizon, a_date in (("anchor", anchor), ("fixed", fixed_date)):
+            if a_date is None:
+                continue
+            rows_a, beta_a = attribute_panel(panel_at(a_date), weighting=weighting, min_n=min_n)
+            d_df = attribute_delta(rows_t, rows_a, beta_t=beta_t, beta_a=beta_a)
+            if d_df.empty:
+                continue
+            label_a = (
+                str(labels.get(a_date, _UNKNOWN_LABEL)) if not labels.empty else _UNKNOWN_LABEL
+            )
+            meta: dict[str, Any] = {
+                "date": last, "cut": cut, "weighting": weighting, "horizon": horizon,
+                "anchor_date": a_date, "label_anchor": label_a, "label_t": label_t,
+                "beta_anchor": beta_a, "beta_t": beta_t,
+            }
+            for i, (k, v) in enumerate(meta.items()):
+                d_df.insert(i, k, v)
+            delta_parts.append(d_df)
+    return level_parts, delta_parts, anchor
+
+
+def compute_attribution(
+    *,
+    cfg: EngineConfig,
+    dates: pd.DatetimeIndex,
+    cuts: dict[str, list[SeriesId]],
+    equity_returns_3m: pd.DataFrame,
+    fi_returns_3m: pd.DataFrame,
+    equity_vol: pd.DataFrame,
+    fi_vol: pd.DataFrame,
+    daily_log_returns_eq: pd.DataFrame,
+    daily_log_returns_fi: pd.DataFrame,
+    beta: BetaBySegment,
+    regime: RegimeFrame,
+    anchor_labels: pd.DataFrame,
+) -> AttributionFrame:
+    """Build the AttributionFrame: last-date level/delta/rollup/pc1 + full-history concentration."""
+    last = pd.Timestamp(dates[-1])
+    level_parts: list[pd.DataFrame] = []
+    delta_parts: list[pd.DataFrame] = []
+    conc_rows: list[dict[str, object]] = []
+    pc1_parts: list[pd.DataFrame] = []
+    anchors: dict[str, pd.Timestamp | None] = {}
+    history_global: pd.DataFrame | None = None
+
+    for cut, series in cuts.items():
+        beta_cap = beta.by_segment[cut].cap_wtd["beta"]
+        beta_values = cast(FloatArray, beta_cap.reindex(dates).to_numpy(dtype=np.float64))
+        pct_today_all = cast(
+            FloatArray, regime.percentile_5y[cut].reindex(dates).to_numpy(dtype=np.float64)
+        )
+        # functools.partial (not a closure) so ruff B023 does not flag the loop variable.
+        panel_at: Callable[[pd.Timestamp], DailyPanel] = partial(
+            _panel_for, series=series, equity_returns_3m=equity_returns_3m,
+            fi_returns_3m=fi_returns_3m, equity_vol=equity_vol, fi_vol=fi_vol,
+        )
+
+        rows, hist_c = _concentration_history(
+            cut, panel_at, dates=dates, beta_values=beta_values,
+            pct_today_all=pct_today_all, cfg=cfg,
+        )
+        conc_rows.extend(rows)
+        if cut == "global" and cfg.attribution_history_global:
+            history_global = pd.DataFrame.from_dict(hist_c, orient="index").sort_index()
+            history_global = history_global.reindex(sorted(history_global.columns), axis=1)
+            history_global.index.name = "date"
+
+        labels = anchor_labels[cut] if cut in anchor_labels.columns else pd.Series(dtype=object)
+        lv_parts, dl_parts, anchor = _last_date_snapshot(
+            cut, panel_at, dates=dates, labels=labels, cfg=cfg
+        )
+        level_parts.extend(lv_parts)
+        delta_parts.extend(dl_parts)
+        anchors[cut] = anchor
+
+        win = _window_returns(
+            series, daily_log_returns_eq=daily_log_returns_eq,
+            daily_log_returns_fi=daily_log_returns_fi, end=last, window=cfg.return_window_days,
+        )
+        p1 = pc1_loadings(win)
+        if not p1.empty:
+            p1.insert(0, "cut", cut)
+            p1.insert(0, "date", last)
+            pc1_parts.append(p1)
+
+    level = (
+        pd.concat(level_parts, ignore_index=True)
+        if level_parts
+        else pd.DataFrame(columns=["date", "cut", "weighting", *LEVEL_COLUMNS])
+    )
+    delta = (
+        pd.concat(delta_parts, ignore_index=True)
+        if delta_parts
+        else pd.DataFrame(columns=[*DELTA_META_COLUMNS, *DELTA_COLUMNS])
+    )
+    conc = pd.DataFrame(conc_rows, columns=list(CONCENTRATION_COLUMNS))
+    pc1 = (
+        pd.concat(pc1_parts, ignore_index=True)
+        if pc1_parts
+        else pd.DataFrame(columns=["date", "cut", *PC1_COLUMNS])
+    )
+    return AttributionFrame(
+        level=level, delta=delta, rollup=_rollup(level), concentration=conc, pc1=pc1,
+        anchors=anchors, history_global=history_global,
+    )

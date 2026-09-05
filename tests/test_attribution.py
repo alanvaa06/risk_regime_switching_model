@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+from pathlib import Path
 from typing import Any, cast
 
 import numpy as np
@@ -17,14 +19,19 @@ from roro.attribution import (
     ConcentrationRow,
     attribute_delta,
     attribute_panel,
+    compute_attribution,
     concentration,
     contributions,
     find_anchor,
     pc1_loadings,
     rank_against_prior,
 )
-from roro.regression import DailyPanel, _wls_slope
-from roro.segments import ASSET_EQ, ASSET_FI, SeriesId
+from roro.classify import classify
+from roro.config import EngineConfig
+from roro.io import load_panel, load_prices
+from roro.regression import DailyPanel, _wls_slope, compute_beta_by_segment
+from roro.returns import daily_log_returns, ewma_vol, total_return_3m
+from roro.segments import ASSET_EQ, ASSET_FI, SeriesId, partition
 
 FloatArray = np.ndarray[Any, np.dtype[np.float64]]
 
@@ -322,3 +329,87 @@ def test_find_anchor_boundary_row_counts() -> None:
     # transition on idx[7]; t = idx[8] -> exactly 1 row back
     assert find_anchor(lab, lab.index[8], max_lookback_days=1) == lab.index[6]
     assert find_anchor(lab, lab.index[8], max_lookback_days=0) is None
+
+
+def _attribution_inputs(tiny_xlsx: Path, cfg: EngineConfig) -> dict[str, Any]:
+    universe = load_panel(tiny_xlsx)
+    prices = load_prices(tiny_xlsx)
+    eq_ret = total_return_3m(prices.equity_lc, window_days=cfg.return_window_days)
+    fi_ret = total_return_3m(prices.fi_lc, window_days=cfg.return_window_days)
+    eq_daily = daily_log_returns(prices.equity_lc)
+    fi_daily = daily_log_returns(prices.fi_lc)
+    eq_vol = ewma_vol(eq_daily, halflife=cfg.ewma_halflife_days)
+    fi_vol = ewma_vol(fi_daily, halflife=cfg.ewma_halflife_days)
+    cuts = partition(universe)
+    dates = pd.DatetimeIndex(prices.equity_lc.index)
+    beta = compute_beta_by_segment(
+        dates=dates, cuts=cuts, equity_returns_3m=eq_ret, fi_returns_3m=fi_ret,
+        equity_vol=eq_vol, fi_vol=fi_vol, min_n=cfg.min_n_per_cut,
+    )
+    regime = classify(
+        beta, bucket_scheme=cfg.bucket_scheme,
+        percentile_window_days=cfg.percentile_window_years * 252,
+        direction_lookback_days=cfg.direction_lookback_days,
+        bootstrap_min_days=cfg.bootstrap_min_days, thin_cuts=frozenset({"LatAm"}),
+    )
+    return {
+        "dates": dates, "cuts": cuts, "equity_returns_3m": eq_ret, "fi_returns_3m": fi_ret,
+        "equity_vol": eq_vol, "fi_vol": fi_vol, "daily_log_returns_eq": eq_daily,
+        "daily_log_returns_fi": fi_daily, "beta": beta, "regime": regime,
+        "anchor_labels": regime.tercile,
+    }
+
+
+def _tiny_cfg(tiny_xlsx: Path, tmp_path: Path) -> EngineConfig:
+    return EngineConfig(
+        data_path=tiny_xlsx, output_dir=tmp_path / "out", ewma_halflife_days=10,
+        return_window_days=21, tripwire_window_days=10, percentile_window_years=1,
+        min_n_per_cut=2, bootstrap_min_days=10,
+    )
+
+
+def test_compute_attribution_shapes_and_exactness(tiny_xlsx: Path, tmp_path: Path) -> None:
+    cfg = _tiny_cfg(tiny_xlsx, tmp_path)
+    inputs = _attribution_inputs(tiny_xlsx, cfg)
+    af = compute_attribution(cfg=cfg, **inputs)
+    # level: last date, all non-degenerate cuts x both weightings
+    assert set(af.level["weighting"]) == {"cap", "eq"}
+    assert "global" in set(af.level["cut"])
+    last = inputs["dates"][-1]
+    assert (af.level["date"] == last).all()
+    g = af.level[(af.level["cut"] == "global") & (af.level["weighting"] == "cap")]
+    beta_cap = inputs["beta"].by_segment["global"].cap_wtd.loc[last, "beta"]
+    assert abs(g["contribution"].sum() - beta_cap) < 1e-10
+    # concentration: full history, one row per date x cut x weighting that has a slope
+    assert {"date", "cut", "weighting", "hhi", "top1_series", "top1_share", "top5_share",
+            "beta", "beta_ex_top1", "fragile_flag"} <= set(af.concentration.columns)
+    conc_g = af.concentration[(af.concentration["cut"] == "global")
+                              & (af.concentration["weighting"] == "cap")]
+    assert len(conc_g) == inputs["beta"].by_segment["global"].cap_wtd["beta"].notna().sum()
+    assert conc_g["hhi"].between(0.0, 1.0).all()
+    # rollups exact within the global regression
+    rb = af.rollup[(af.rollup["cut"] == "global") & (af.rollup["weighting"] == "cap")
+                   & (af.rollup["group_kind"] == "block")]
+    assert abs(rb["contribution_sum"].sum() - beta_cap) < 1e-10
+    # delta: fixed horizon exists for global; sums to beta_t - beta_a
+    d = af.delta[(af.delta["cut"] == "global") & (af.delta["weighting"] == "cap")
+                 & (af.delta["horizon"] == "fixed")]
+    assert not d.empty
+    assert abs(d["delta_total"].sum() - (d["beta_t"].iloc[0] - d["beta_anchor"].iloc[0])) < 1e-10
+    # pc1 for global: loadings sum to 1
+    p = af.pc1[af.pc1["cut"] == "global"]
+    assert abs(p["pc1_load_sq"].sum() - 1.0) < 1e-10
+    assert "global" in af.anchors
+    assert af.history_global is None
+
+
+def test_compute_attribution_history_global_flag(tiny_xlsx: Path, tmp_path: Path) -> None:
+    cfg = replace(_tiny_cfg(tiny_xlsx, tmp_path), attribution_history_global=True)
+    inputs = _attribution_inputs(tiny_xlsx, cfg)
+    af = compute_attribution(cfg=cfg, **inputs)
+    assert af.history_global is not None
+    assert af.history_global.index.name == "date"
+    row_sums = af.history_global.sum(axis=1, min_count=1)
+    beta = inputs["beta"].by_segment["global"].cap_wtd["beta"]
+    common = row_sums.dropna().index
+    assert np.allclose(row_sums.loc[common], beta.loc[common], atol=1e-10)
