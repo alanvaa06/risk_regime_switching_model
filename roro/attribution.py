@@ -132,3 +132,55 @@ def attribute_panel(
 def rows_to_frame(rows: list[AttributionRow]) -> pd.DataFrame:
     """Rows -> DataFrame with LEVEL_COLUMNS order (empty frame keeps the columns)."""
     return pd.DataFrame([asdict(r) for r in rows], columns=list(LEVEL_COLUMNS))
+
+
+DELTA_COLUMNS: tuple[str, ...] = (
+    "series", "block", "effect_return", "effect_position",
+    "effect_interaction", "effect_universe", "delta_total",
+)
+
+
+def attribute_delta(
+    rows_t: list[AttributionRow],
+    rows_a: list[AttributionRow],
+    *,
+    beta_t: float,
+    beta_a: float,
+) -> pd.DataFrame:
+    """Brinson-style split of beta_t - beta_a per asset (exact; sums to the delta).
+
+    Common assets: return effect h_a*dy + position effect dh*y_a + interaction dh*dy.
+    Entries (only at t) / exits (only at anchor): whole contribution in `effect_universe`.
+    Empty frame when either beta is NaN (suppressed panel).
+    """
+    if not (np.isfinite(beta_t) and np.isfinite(beta_a)):
+        return pd.DataFrame(columns=list(DELTA_COLUMNS))
+    by_t = {r.series: r for r in rows_t}
+    by_a = {r.series: r for r in rows_a}
+    out: list[dict[str, object]] = []
+    for s in sorted(set(by_t) | set(by_a)):
+        rt, ra = by_t.get(s), by_a.get(s)
+        eff_ret = eff_pos = eff_int = eff_uni = 0.0
+        if rt is not None and ra is not None:
+            dh = rt.leverage - ra.leverage
+            dy = rt.ret3m - ra.ret3m
+            eff_ret = ra.leverage * dy
+            eff_pos = dh * ra.ret3m
+            eff_int = dh * dy
+            block = rt.block
+        elif rt is not None:
+            eff_uni = rt.contribution
+            block = rt.block
+        else:
+            assert ra is not None
+            eff_uni = -ra.contribution
+            block = ra.block
+        out.append(
+            {
+                "series": s, "block": block,
+                "effect_return": eff_ret, "effect_position": eff_pos,
+                "effect_interaction": eff_int, "effect_universe": eff_uni,
+                "delta_total": eff_ret + eff_pos + eff_int + eff_uni,
+            }
+        )
+    return pd.DataFrame(out, columns=list(DELTA_COLUMNS))
