@@ -315,3 +315,10 @@ def test_find_anchor_ignores_future_rows() -> None:
     assert find_anchor(lab, t, max_lookback_days=1260) == find_anchor(
         extended, t, max_lookback_days=1260
     )
+
+
+def test_find_anchor_boundary_row_counts() -> None:
+    lab = _labels()
+    # transition on idx[7]; t = idx[8] -> exactly 1 row back
+    assert find_anchor(lab, lab.index[8], max_lookback_days=1) == lab.index[6]
+    assert find_anchor(lab, lab.index[8], max_lookback_days=0) is None

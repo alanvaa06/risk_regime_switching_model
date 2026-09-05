@@ -317,9 +317,10 @@ def find_anchor(
     """Anchor for the delta waterfall: the day BEFORE the most recent label transition <= t.
 
     Uses only rows <= t (causal). Transitions from NaN/'Unknown' do not count. The
-    transition must lie within the trailing `max_lookback_days` rows. None if no anchor.
+    transition must be at most `max_lookback_days` rows before `t` (the row
+    `max_lookback_days` back counts).
     """
-    hist = labels.loc[:t].iloc[-(max_lookback_days + 1):]
+    hist = labels.loc[:t]
     known = hist.notna() & (hist != _UNKNOWN_LABEL)
     prev = hist.shift(1)
     prev_known = prev.notna() & (prev != _UNKNOWN_LABEL)
@@ -327,6 +328,6 @@ def find_anchor(
     if not bool(is_transition.any()):
         return None
     pos = int(np.flatnonzero(is_transition.to_numpy())[-1])
-    if pos == 0:
+    if (len(hist) - 1 - pos) > max_lookback_days:
         return None
     return pd.Timestamp(hist.index[pos - 1])
