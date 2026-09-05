@@ -306,3 +306,27 @@ def pc1_loadings(window_returns: pd.DataFrame) -> pd.DataFrame:
         columns=list(PC1_COLUMNS),
     )
     return df.sort_values("series").reset_index(drop=True)
+
+
+_UNKNOWN_LABEL: str = "Unknown"
+
+
+def find_anchor(
+    labels: pd.Series, t: pd.Timestamp, *, max_lookback_days: int
+) -> pd.Timestamp | None:
+    """Anchor for the delta waterfall: the day BEFORE the most recent label transition <= t.
+
+    Uses only rows <= t (causal). Transitions from NaN/'Unknown' do not count. The
+    transition must lie within the trailing `max_lookback_days` rows. None if no anchor.
+    """
+    hist = labels.loc[:t].iloc[-(max_lookback_days + 1):]
+    known = hist.notna() & (hist != _UNKNOWN_LABEL)
+    prev = hist.shift(1)
+    prev_known = prev.notna() & (prev != _UNKNOWN_LABEL)
+    is_transition = known & prev_known & (hist != prev)
+    if not bool(is_transition.any()):
+        return None
+    pos = int(np.flatnonzero(is_transition.to_numpy())[-1])
+    if pos == 0:
+        return None
+    return pd.Timestamp(hist.index[pos - 1])

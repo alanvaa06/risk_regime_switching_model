@@ -19,6 +19,7 @@ from roro.attribution import (
     attribute_panel,
     concentration,
     contributions,
+    find_anchor,
     pc1_loadings,
     rank_against_prior,
 )
@@ -277,3 +278,40 @@ def test_pc1_loadings_zero_variance_asset_keeps_loadings() -> None:
     assert float(cast(Any, out.at["E__FI", "var_share"])) == 0.0
     assert np.isnan(float(cast(Any, out.at["E__FI", "row_mean_corr"])))
     assert np.isfinite(float(cast(Any, out.at["A__Eq", "row_mean_corr"])))
+
+
+def _labels() -> pd.Series:
+    idx = pd.bdate_range("2024-01-01", periods=12)
+    vals = ["Unknown", "Unknown", "Risk-on", "Risk-on", "Risk-on", "Transitional",
+            "Transitional", "Risk-off", "Risk-off", "Risk-off", "Risk-off", "Risk-off"]
+    return pd.Series(vals, index=idx)
+
+
+def test_find_anchor_is_day_before_last_transition() -> None:
+    lab = _labels()
+    t = lab.index[-1]
+    a = find_anchor(lab, t, max_lookback_days=1260)
+    assert a == lab.index[6]  # transition to Risk-off on idx[7]; anchor = idx[6]
+    assert a < t
+
+
+def test_find_anchor_transition_today_gives_yesterday() -> None:
+    lab = _labels()
+    t = lab.index[7]
+    assert find_anchor(lab, t, max_lookback_days=1260) == lab.index[6]
+
+
+def test_find_anchor_none_without_transition_or_beyond_lookback() -> None:
+    lab = _labels()
+    # Unknown->Risk-on ignored
+    assert find_anchor(lab, lab.index[4], max_lookback_days=1260) is None
+    assert find_anchor(lab, lab.index[-1], max_lookback_days=2) is None
+
+
+def test_find_anchor_ignores_future_rows() -> None:
+    lab = _labels()
+    t = lab.index[8]
+    extended = pd.concat([lab, pd.Series(["Risk-on"], index=[lab.index[-1] + pd.offsets.BDay()])])
+    assert find_anchor(lab, t, max_lookback_days=1260) == find_anchor(
+        extended, t, max_lookback_days=1260
+    )
