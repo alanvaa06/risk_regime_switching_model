@@ -43,8 +43,9 @@ def test_build_report_from_golden_2024q1(tmp_path: Path, tiny_xlsx: Path) -> Non
 
     html_text = out.read_text(encoding="utf-8")
     assert html_text.startswith("<!DOCTYPE html>")
-    # 5 figures rendered (no HMM in this golden run): 3 base + 2 vol heatmaps
-    assert html_text.count('class="plotly-graph-div"') == 5
+    # 10 figures rendered (no HMM/JM in this golden run): 3 base + 2 vol heatmaps + 5 attribution
+    assert html_text.count('class="plotly-graph-div"') == 10
+    assert "Slope attribution" in html_text
     # Section titles present
     assert "Risk vs Return" in html_text
     assert "Beta vs Return" in html_text

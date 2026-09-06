@@ -3,6 +3,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from roro.report.attribution_figs import (
+    attribution_bars,
+    attribution_scatter,
+    attribution_waterfall,
+    concentration_timeseries,
+    pc1_loadings_bars,
+)
 from roro.report.figures import (
     beta_band_lookup,
     beta_timeseries,
@@ -64,6 +71,17 @@ def build_report(
         vol_pct_asset_heatmap(bundle), "fig_vol_assets",
         "Volatility percentile by asset",
     ))
+    if bundle.attribution_level is not None and not bundle.attribution_level.empty:
+        specs.extend([
+            FigureSpec(attribution_bars(bundle), "fig_attrib_bars", "Slope attribution"),
+            FigureSpec(attribution_waterfall(bundle), "fig_attrib_waterfall", "Δβ̂ waterfall"),
+            FigureSpec(attribution_scatter(bundle), "fig_attrib_scatter",
+                       "Vol vs return, sized by |contribution|"),
+            FigureSpec(concentration_timeseries(bundle), "fig_concentration_ts",
+                       "Concentration of the slope"),
+            FigureSpec(pc1_loadings_bars(bundle), "fig_pc1_loadings",
+                       "PC1 loadings vs variance share"),
+        ])
     html = assemble(
         specs,
         run_date=bundle.run_date,

@@ -4,9 +4,11 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
+import pandas as pd
 import plotly.graph_objects as go
 import pytest
 
+from roro.report import build_report
 from roro.report.attribution_figs import (
     QUADRANT_COLORS,
     attribution_bars,
@@ -109,3 +111,37 @@ def test_bars_dropdown_button_carries_other_cut_data(abundle: DataBundle) -> Non
     restyle, relayout = em_eq["args"]
     assert relayout["title"].startswith("Slope attribution — EM_Eq · eq")
     assert len(list(restyle["y"][0])) == 4  # four fixture assets
+
+
+def test_build_report_includes_attribution_sections(
+    attribution_run_dir: Path, tiny_xlsx: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "r.html"
+    build_report(attribution_run_dir, tiny_xlsx, out, window=21)
+    html = out.read_text(encoding="utf-8")
+    for title in ("Slope attribution", "Δβ̂ waterfall", "Vol vs return, sized by |contribution|",
+                  "Concentration of the slope", "PC1 loadings vs variance share"):
+        assert title in html, title
+    assert html.count('class="plotly-graph-div"') == 10
+
+
+def test_build_report_without_attribution_unchanged(
+    minimal_run_dir: Path, tiny_xlsx: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "r.html"
+    build_report(minimal_run_dir, tiny_xlsx, out, window=21)
+    html = out.read_text(encoding="utf-8")
+    assert "Slope attribution" not in html
+    assert html.count('class="plotly-graph-div"') == 5
+
+
+def test_build_report_skips_attribution_when_csv_has_only_header(
+    attribution_run_dir: Path, tiny_xlsx: Path, tmp_path: Path
+) -> None:
+    lvl = attribution_run_dir / "attribution.csv"
+    lvl.write_text(pd.read_csv(lvl).iloc[:0].to_csv(index=False), encoding="utf-8")
+    out = tmp_path / "r.html"
+    build_report(attribution_run_dir, tiny_xlsx, out, window=21)
+    html = out.read_text(encoding="utf-8")
+    assert "Slope attribution" not in html
+    assert html.count('class="plotly-graph-div"') == 5
