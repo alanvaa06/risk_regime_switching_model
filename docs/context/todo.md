@@ -44,3 +44,19 @@ Spec: `docs/superpowers/specs/2026-06-09-jm-regime-design.md` · Plan: `docs/sup
 - [x] J6 — end-to-end real-data run (2008–2026): JM regimes render in HTML (Risk-off 1268 / Transitional 1320 / Risk-on 1637 / 315 warmup; non-degenerate). `outputs/jm_only_report.html`.
 - Decisions D1–D5 locked (research-backed). Off by default. Promotion to production default deferred to the AJ-7 decision (JM clears G5 outright AND in-range G3 ≥ 7/7) against the recalibrated scorecard.
 - [ ] Follow-ups (out of scope): λ re-calibration on standardized features (S-JM3); cadence-invariance bench (AJ-4); sparse multivariate JM + FTIC (S-JM6, where log(P)>0 activates FTIC).
+
+## Regime Attribution (2026-09-05) — DONE (feat/attribution)
+Spec: `docs/superpowers/specs/2026-09-05-roro-attribution-design.md` · Plan: `docs/superpowers/plans/2026-09-05-roro-attribution.md` · Memo: `docs/analysis/2026-09-05-attribution-memo.md`
+
+- [x] A1 — numeric kernels (`roro/attribution.py`): `contributions`, `attribute_panel`, `attribute_delta`, `concentration`, `rank_against_prior`, `pc1_loadings`, `find_anchor`
+- [x] A2 — orchestrator `compute_attribution` → `AttributionFrame`; engine step 5d (`attribution_enabled`, on by default); `_anchor_labels` fallback chain percentile/hmm/jm → percentile + warning
+- [x] A3 — io (5 CSVs: `attribution.csv`, `attribution_delta.csv`, `attribution_rollup.csv`, `concentration.csv`, `attribution_pc1.csv` + optional `attribution_history_global.csv`) + `snapshot.json["attribution"]`; alerts `kind=concentration` (`transition_day` / `fragile`); goldens regenerated (5 new files; `alerts.csv` golden widened by the new kind; 5 pre-existing numeric goldens unchanged); off-switch byte-identity test
+- [x] A4 — report: `roro/report/attribution_figs.py`, 5 figures each gated on its own frame; `band_shapes` promoted to public
+- [x] A5 — real-data memo (`docs/analysis/2026-09-05-attribution-memo.md`): 2026-05-26 global-cap snapshot reproduced 15/15 to 4dp; concentration stats; D3 verdict; event review (AA-7)
+
+Follow-ups (not started):
+- [ ] D3 robust-slope spec — trigger evidence: global cap sign-flip on drop-top-1 = 17.15% of days, top1_share>0.5 = 19.25% (clears the 20% bar by only 0.75pp, provisional); per-cut EM 59.4% / LatAm 49.7% / EM_Eq 42.0% would already fire if the trigger is ever restated per-cut
+- [ ] Make `fragile` a persistence-gated alert (n consecutive days) or demote it to a metadata field — as a daily alert it fires on 27.74% of global cap days (14,632 / 15,749 concentration alert rows), which is unactionable
+- [ ] Run with `attribution_history_global=True` to get the exact jackknife sign test from spec section 6 (magnitude-based substitutes were used instead in the memo)
+- [ ] Document `fragile_flag`/`pct_ex_top1` as cap-only in the artifact schema docs (`roro/attribution.py:446` — every `eq` row reads `fragile_flag=False`, `pct_ex_top1=NaN` by construction, silently under-reporting sign flips like the 2026-05-26 global eq row)
+- [ ] Squash decision for commit `9f7290e` (broken intermediate state: engine called `detect_alerts(attribution=...)` before alerts.py accepted the kwarg, fixed in `a36f4cf`) — squash-merge recommended when merging `feat/attribution`, or accept as-is if history is kept linear
