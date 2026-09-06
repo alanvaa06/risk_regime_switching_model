@@ -278,7 +278,9 @@ present in the window, not a transition inside it).
 
 ## Report
 
-`outputs/attribution_report.html` (53.9 MB) exists and was built by the controller.
+`outputs/attribution_report.html` exists and was built by the controller. Size: report HTML
+~56.5 MB, of which attribution figures add ~4.2 MB (+8%); the remaining ~52 MB pre-exist
+(vol heatmaps).
 
 - `class="plotly-graph-div"` occurrences: **10** (expected 10) — PASS.
 - All five attribution section titles present — PASS:
