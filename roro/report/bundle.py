@@ -35,3 +35,8 @@ class DataBundle:
     seg_jm_p_tr: pd.DataFrame | None = None
     seg_jm_p_on: pd.DataFrame | None = None
     vol_pct: pd.DataFrame | None = None
+    attribution_level: pd.DataFrame | None = None
+    attribution_delta: pd.DataFrame | None = None
+    attribution_rollup: pd.DataFrame | None = None
+    concentration: pd.DataFrame | None = None
+    attribution_pc1: pd.DataFrame | None = None
