@@ -30,6 +30,9 @@ def detect_alerts(
     top1_alert: float = _DEFAULT_TOP1_ALERT,
 ) -> AlertSet:
     transitions = _bucket_transitions(regime.tercile)
+    thin_cuts = frozenset(
+        c for c in regime.thin_cut_flag.columns if bool(regime.thin_cut_flag[c].any())
+    )
     return AlertSet(
         bucket_transitions=transitions,
         disagreement_events=_disagreement_events(regime, correlation),
@@ -45,7 +48,12 @@ def detect_alerts(
             else pd.DataFrame(columns=["date", "segment", "from_bucket", "to_bucket"])
         ),
         concentration_alerts=(
-            _concentration_alerts(attribution.concentration, transitions, top1_alert=top1_alert)
+            _concentration_alerts(
+                attribution.concentration,
+                transitions,
+                top1_alert=top1_alert,
+                thin_cuts=thin_cuts,
+            )
             if attribution is not None
             else pd.DataFrame(columns=list(CONCENTRATION_ALERT_COLUMNS))
         ),
@@ -53,9 +61,17 @@ def detect_alerts(
 
 
 def _concentration_alerts(
-    conc: pd.DataFrame, transitions: pd.DataFrame, *, top1_alert: float
+    conc: pd.DataFrame,
+    transitions: pd.DataFrame,
+    *,
+    top1_alert: float,
+    thin_cuts: frozenset[str] = frozenset(),
 ) -> pd.DataFrame:
-    """Cap-weighted rows where (top1_share > threshold on a bucket-transition day) or fragile."""
+    """Cap-weighted rows where (top1_share > threshold on a bucket-transition day) or fragile.
+
+    Fragility alerts are suppressed on thin cuts (spec section 11); transition-day
+    alerts are not.
+    """
     if conc.empty:
         return pd.DataFrame(columns=list(CONCENTRATION_ALERT_COLUMNS))
     cap = conc[conc["weighting"] == "cap"]
@@ -68,7 +84,7 @@ def _concentration_alerts(
             index=cap.index,
         )
     concentrated = cap["top1_share"] > top1_alert
-    fragile = cap["fragile_flag"].astype(bool)
+    fragile = cap["fragile_flag"].astype(bool) & ~cap["cut"].isin(thin_cuts)
     hit = cap[(on_transition & concentrated) | fragile].copy()
     if hit.empty:
         return pd.DataFrame(columns=list(CONCENTRATION_ALERT_COLUMNS))
