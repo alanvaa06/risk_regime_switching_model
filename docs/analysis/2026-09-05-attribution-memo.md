@@ -16,7 +16,7 @@ uv run roro run --config configs/default.yaml --date 2026-09-05 \
 | Methodology version | 1.0.0 |
 | Git SHA (`snapshot.json.code_version`) | `99856c98e91b6e85ea3d52a5cfdd2bb99586cb4e` (clean) |
 | Engine runtime | ~63 s total (as reported by the run controller; not re-timed for this memo) |
-| Config | `configs/default.yaml`: `min_n_per_cut=10`, `percentile_window_years=5`, `attribution_top1_alert=0.5`, `attribution_fixed_horizon_days=63`, `attribution_label_source=percentile`, `attribution_anchor_lookback_days=1260`, `attribution_top_n=12`, `attribution_history_global=False` |
+| Config | `configs/default.yaml`: `min_n_per_cut=10`, `percentile_window_years=5`, `attribution_top1_alert=0.5`, `attribution_fixed_horizon_days=63`, `attribution_label_source=percentile`, `attribution_anchor_lookback_days=1260`, `attribution_history_global=False` |
 | Data fingerprint | `data.xlsx` sha256 `2df7f078…f72afa6`; FRED pulled 2026-09-05T18:58:28 |
 | Snapshot warnings | 4 FI local-currency NaN-column notices (`Taiwan`, `Chile`, `DM`, `Asia`) — pre-existing, unrelated to attribution |
 

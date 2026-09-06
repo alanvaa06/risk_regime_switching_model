@@ -56,7 +56,6 @@ class EngineConfig:
     attribution_label_source: str = "percentile"  # percentile | hmm | jm
     attribution_anchor_lookback_days: int = 1260
     attribution_fixed_horizon_days: int = 63
-    attribution_top_n: int = 12
     attribution_top1_alert: float = 0.5
     attribution_history_global: bool = False
     fred_api_key: str | None = None

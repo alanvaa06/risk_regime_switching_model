@@ -175,7 +175,6 @@ class AttributionFrame:
 | `attribution_label_source` | str | `"percentile"` | Anchor source: percentile / hmm / jm |
 | `attribution_anchor_lookback_days` | int | `1260` | Max lookback for a transition anchor |
 | `attribution_fixed_horizon_days` | int | `63` | Parallel fixed window |
-| `attribution_top_n` | int | `12` | Rows shown in report tables/bars |
 | `attribution_top1_alert` | float | `0.50` | Concentration alert threshold |
 | `attribution_history_global` | bool | `False` | Persist wide c-matrix for the global cut (D2) |
 
