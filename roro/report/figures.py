@@ -656,7 +656,7 @@ def beta_timeseries(bundle: DataBundle) -> go.Figure:
     return fig
 
 
-def _band_shapes(labels: pd.Series, *, smooth: bool) -> list[dict[str, object]]:
+def band_shapes(labels: pd.Series, *, smooth: bool) -> list[dict[str, object]]:
     """Regime-run rectangles as JSON-serializable shape dicts (x0/x1 = ISO date strings)."""
     series = _smooth_regime_hysteresis(labels, _REGIME_CONFIRM_DAYS) if smooth else labels
     shapes: list[dict[str, object]] = []
@@ -697,13 +697,13 @@ def beta_band_lookup(bundle: DataBundle) -> dict[str, dict[str, list[dict[str, o
             continue
         percentile: list[dict[str, object]] = []
         if seg in bundle.seg_tercile.columns:
-            percentile = _band_shapes(bundle.seg_tercile[seg], smooth=True)
+            percentile = band_shapes(bundle.seg_tercile[seg], smooth=True)
         hmm: list[dict[str, object]] = []
         if bundle.seg_hmm_label is not None and seg in bundle.seg_hmm_label.columns:
-            hmm = _band_shapes(bundle.seg_hmm_label[seg], smooth=False)
+            hmm = band_shapes(bundle.seg_hmm_label[seg], smooth=False)
         jm: list[dict[str, object]] = []
         if bundle.seg_jm_label is not None and seg in bundle.seg_jm_label.columns:
-            jm = _band_shapes(bundle.seg_jm_label[seg], smooth=False)
+            jm = band_shapes(bundle.seg_jm_label[seg], smooth=False)
         out[seg] = {"percentile": percentile, "hmm": hmm, "jm": jm}
     return out
 

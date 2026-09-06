@@ -1,6 +1,7 @@
 """Pure figure-builder tests for the attribution figures."""
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import plotly.graph_objects as go
@@ -15,6 +16,7 @@ from roro.report.attribution_figs import (
     pc1_loadings_bars,
 )
 from roro.report.bundle import DataBundle
+from roro.report.errors import ReportInputError
 from roro.report.load import load_bundle
 
 
@@ -75,3 +77,35 @@ def test_all_figures_height_700_and_template(abundle: DataBundle) -> None:
         assert fig.layout.height == 700
         # Same convention as test_figures: template presence is the proof (deep lookup is brittle)
         assert fig.layout.template is not None
+
+
+def test_figures_raise_report_input_error_on_empty_frames(abundle: DataBundle) -> None:
+    assert abundle.attribution_level is not None
+    empty = replace(
+        abundle,
+        attribution_level=abundle.attribution_level.iloc[:0],
+        attribution_delta=abundle.attribution_delta.iloc[:0],  # type: ignore[union-attr]
+        concentration=abundle.concentration.iloc[:0],  # type: ignore[union-attr]
+        attribution_pc1=abundle.attribution_pc1.iloc[:0],  # type: ignore[union-attr]
+    )
+    for build in (attribution_bars, attribution_waterfall, attribution_scatter,
+                  concentration_timeseries, pc1_loadings_bars):
+        with pytest.raises(ReportInputError):
+            build(empty)
+
+
+def test_figures_are_deterministic_and_marker_sizes_bounded(abundle: DataBundle) -> None:
+    for build in (attribution_bars, attribution_waterfall, attribution_scatter,
+                  concentration_timeseries, pc1_loadings_bars):
+        assert build(abundle).to_json() == build(abundle).to_json()
+    sizes = attribution_scatter(abundle).data[0].marker.size
+    assert min(sizes) >= 6.0 and max(sizes) <= 40.0
+
+
+def test_bars_dropdown_button_carries_other_cut_data(abundle: DataBundle) -> None:
+    fig = attribution_bars(abundle)
+    buttons = fig.layout.updatemenus[0]["buttons"]
+    em_eq = next(b for b in buttons if b["label"] == "EM_Eq · eq")
+    restyle, relayout = em_eq["args"]
+    assert relayout["title"].startswith("Slope attribution — EM_Eq · eq")
+    assert len(list(restyle["y"][0])) == 4  # four fixture assets
