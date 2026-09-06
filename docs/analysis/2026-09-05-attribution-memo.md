@@ -151,11 +151,11 @@ ever restated per-cut rather than global-only, it fires immediately.
 ### Jackknife note
 
 The exact sign test from spec section 6 — share of days where `sign(beta - beta_ex_top1)`
-equals the sign of the top-1 asset's own contribution — **cannot be computed from this run**.
-`attribution.csv` holds the last date only, so historic per-asset contributions are not
+equals the sign of the top-1 asset's own contribution — **could not be computed from this
+run**. `attribution.csv` holds the last date only, so historic per-asset contributions are not
 available; producing them requires `attribution_history_global`, which is `False` in
-`configs/default.yaml` and confirmed off in `snapshot.json.config_resolved`. Recorded as an
-open item.
+`configs/default.yaml` and confirmed off in `snapshot.json.config_resolved`. This has since
+been resolved with a dedicated re-run — see "Jackknife sign check (spec §6)" below.
 
 What can be measured on the 4,477 valid global-cap days:
 
@@ -175,6 +175,34 @@ cap-weighted slope, and on roughly one day in six it accounts for more than all 
 slope changes sign when the single largest name is removed. That is a stronger robustness
 concern than the 19.25% headline suggests, because it is a statement about the *sign* of the
 regime read, not just its size.
+
+### Jackknife sign check (spec §6)
+
+Re-ran the engine with `configs/attribution-history.yaml` (= `configs/default.yaml` plus
+`attribution_history_global: true`):
+
+```
+uv run roro run --config configs/attribution-history.yaml --date 2026-09-05 \
+  --as-of-data-date 2026-05-26 --out outputs/attribution_history_run --force
+```
+
+This writes `attribution_history_global.csv`, the wide per-asset cap-weighted global
+contribution history (4,477 dates x 64 series, 6.4 MB). Running the exact spec section 6 sign
+test against it, over the same 4,477 valid global-cap days:
+
+- `top1_series` in `concentration.csv` equals `argmax_i |c_i|` computed from the history matrix
+  on **100.0%** of days — the two code paths (the daily concentration diagnostic and the full
+  contribution history) agree exactly.
+- `sign(beta - beta_ex_top1) == sign(c_top1)` on **85.7%** of days.
+- Row sums of the history matrix equal `beta` to a maximum absolute error of **3.0e-15**,
+  confirming the decomposition is exact over the full history, not just on the last date.
+
+**Interpretation.** Removing the top-1 asset changes the slope through two channels: its own
+contribution `c_top1`, and the re-estimated leverage of every other asset (`xbar` and `D` both
+move once the top-1 name is dropped). Exact sign agreement is therefore not an identity —
+85.7% says the direct channel dominates, but the cross-channel effect is material, which is
+consistent with the 17.15% sign-flip rate reported above. Spec section 6 is closed by this run;
+see the Open issues section for status.
 
 ## Concentration alerts
 
@@ -295,10 +323,11 @@ Volatility breadth, Volatility percentile by asset) are also intact.
 
 ## Open issues
 
-- **Exact jackknife sign test deferred.** `attribution_history_global=False` in
-  `configs/default.yaml`, so per-asset historic contributions are not written and the spec
-  section 6 sign test cannot be run. The magnitude-based substitutes reported above are weaker
-  evidence. Re-run with the flag on before closing spec section 6.
+- **Exact jackknife sign test — closed.** Re-run with `configs/attribution-history.yaml`
+  (`attribution_history_global=True`) on the full 4,477-day global cap history: `top1_series`
+  matches `argmax_i |c_i|` from the history matrix on 100.0% of days, `sign(beta -
+  beta_ex_top1) == sign(c_top1)` on 85.7% of days, and history-matrix row sums equal `beta` to
+  max abs error 3.0e-15. See "Jackknife sign check (spec §6)" above. Spec section 6 satisfied.
 - **D3 clears by 0.75pp only.** 19.25% versus a 20% threshold on global cap. Provisional. If
   the trigger is ever evaluated per-cut, EM (59.41%), LatAm (49.65%) and EM_Eq (42.01%) fire
   immediately, so the global-only framing is doing a lot of work.
