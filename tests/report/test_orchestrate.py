@@ -114,3 +114,16 @@ def test_build_report_byte_identical_without_jm(
     build_report(minimal_run_dir, tiny_xlsx, a, window=21)
     build_report(minimal_run_dir, tiny_xlsx, b, window=21)
     assert a.read_bytes() == b.read_bytes()  # determinism preserved (no JM present)
+
+
+def test_build_report_byte_identical_with_attribution(
+    attribution_run_dir: Path, tiny_xlsx: Path, tmp_path: Path
+) -> None:
+    """AA-4: the attribution figures do not break byte-level report determinism."""
+    from roro.report import build_report  # noqa: PLC0415
+
+    a, b = tmp_path / "a.html", tmp_path / "b.html"
+    build_report(attribution_run_dir, tiny_xlsx, a, window=21)
+    build_report(attribution_run_dir, tiny_xlsx, b, window=21)
+    assert a.read_bytes() == b.read_bytes()
+    assert "Slope attribution" in a.read_text(encoding="utf-8")
