@@ -121,3 +121,63 @@ def make_run_dir(tmp_path: Path) -> Callable[[Path], Path]:
     def _factory(xlsx_path: Path) -> Path:
         return _write_minimal_run_dir(tmp_path, xlsx_path)
     return _factory
+
+
+def write_attribution_csvs(run_dir: Path) -> None:
+    """Add minimal attribution artifacts (segments match the minimal fixture)."""
+    d = pd.Timestamp("2024-12-31")
+    dates = pd.bdate_range("2020-01-02", "2024-12-31")
+    level_rows = []
+    delta_rows = []
+    pc1_rows = []
+    for seg in ("global", "DM", "EM", "EM_Eq", "EM_FI"):
+        for weighting in ("cap", "eq"):
+            for i, (series, block, quad) in enumerate((
+                ("United States__Eq", "DM_Eq", "HI/+"), ("Brazil__Eq", "EM_Eq", "HI/-"),
+                ("Germany__FI", "DM_FI", "LO/-"), ("Mexico__FI", "EM_FI", "LO/+"),
+            )):
+                c = (0.3, -0.1, 0.05, -0.02)[i]
+                level_rows.append({
+                    "date": d, "cut": seg, "weighting": weighting, "series": series,
+                    "block": block, "latam": series.startswith(("Brazil", "Mexico")),
+                    "vol": 0.1 * (i + 1), "ret3m": c, "weight": 0.25, "leverage": 1.0,
+                    "contribution": c, "share": c / 0.23, "quadrant": quad,
+                    "xbar": 0.25, "ybar": 0.05,
+                })
+                delta_rows.append({
+                    "date": d, "cut": seg, "weighting": weighting, "horizon": "fixed",
+                    "anchor_date": dates[-64], "label_anchor": "Risk-off", "label_t": "Risk-on",
+                    "beta_anchor": 0.1, "beta_t": 0.23, "series": series, "block": block,
+                    "effect_return": c / 2, "effect_position": c / 4,
+                    "effect_interaction": c / 8, "effect_universe": 0.0,
+                    "delta_total": c * 7 / 8,
+                })
+            if weighting == "cap":
+                for series in ("United States__Eq", "Brazil__Eq", "Germany__FI", "Mexico__FI"):
+                    pc1_rows.append({
+                        "date": d, "cut": seg, "series": series, "pc1_load_sq": 0.25,
+                        "var_share": 0.25, "decoupling": 0.0, "row_mean_corr": 0.3,
+                    })
+    conc_rows = [
+        {"date": dt, "cut": seg, "weighting": w, "n": 4, "beta": 0.23, "hhi": 0.4,
+         "top1_series": "United States__Eq", "top1_share": 0.6, "top5_share": 1.0,
+         "beta_ex_top1": 0.0, "pct_today": 0.8, "pct_ex_top1": 0.4, "fragile_flag": True}
+        for dt in dates for seg in ("global", "DM", "EM", "EM_Eq", "EM_FI") for w in ("cap", "eq")
+    ]
+    rollup_rows = [
+        {"date": d, "cut": seg, "weighting": w, "group_kind": "block", "group": blk,
+         "contribution_sum": val, "n": 1}
+        for seg in ("global", "DM", "EM", "EM_Eq", "EM_FI") for w in ("cap", "eq")
+        for blk, val in (("DM_Eq", 0.3), ("EM_Eq", -0.1), ("DM_FI", 0.05), ("EM_FI", -0.02))
+    ]
+    pd.DataFrame(level_rows).to_csv(run_dir / "attribution.csv", index=False)
+    pd.DataFrame(delta_rows).to_csv(run_dir / "attribution_delta.csv", index=False)
+    pd.DataFrame(rollup_rows).to_csv(run_dir / "attribution_rollup.csv", index=False)
+    pd.DataFrame(conc_rows).to_csv(run_dir / "concentration.csv", index=False)
+    pd.DataFrame(pc1_rows).to_csv(run_dir / "attribution_pc1.csv", index=False)
+
+
+@pytest.fixture
+def attribution_run_dir(minimal_run_dir: Path) -> Path:
+    write_attribution_csvs(minimal_run_dir)
+    return minimal_run_dir

@@ -169,6 +169,17 @@ def load_bundle(
         )
         seg_jm_p_on = jm.pivot(index="date", columns="segment", values="p_risk_on").sort_index()
 
+    attribution_level = attribution_delta = attribution_rollup = None
+    concentration = attribution_pc1 = None
+    if (run_dir / "attribution.csv").exists():
+        attribution_level = pd.read_csv(run_dir / "attribution.csv", parse_dates=["date"])
+        attribution_delta = pd.read_csv(
+            run_dir / "attribution_delta.csv", parse_dates=["date", "anchor_date"]
+        )
+        attribution_rollup = pd.read_csv(run_dir / "attribution_rollup.csv", parse_dates=["date"])
+        concentration = pd.read_csv(run_dir / "concentration.csv", parse_dates=["date"])
+        attribution_pc1 = pd.read_csv(run_dir / "attribution_pc1.csv", parse_dates=["date"])
+
     return DataBundle(
         run_date=pd.Timestamp(str(snapshot["run_date"])),
         methodology_version=str(snapshot["methodology_version"]),
@@ -188,4 +199,9 @@ def load_bundle(
         seg_jm_p_tr=seg_jm_p_tr,
         seg_jm_p_on=seg_jm_p_on,
         vol_pct=vol_pct,
+        attribution_level=attribution_level,
+        attribution_delta=attribution_delta,
+        attribution_rollup=attribution_rollup,
+        concentration=concentration,
+        attribution_pc1=attribution_pc1,
     )

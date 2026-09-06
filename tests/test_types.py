@@ -1,4 +1,5 @@
 import dataclasses
+from dataclasses import fields
 from datetime import datetime
 
 import pandas as pd
@@ -6,6 +7,7 @@ import pytest
 
 from roro.types import (
     AlertSet,
+    AttributionFrame,
     BetaBySegment,
     BetaFrame,
     CorrelationFrame,
@@ -15,6 +17,7 @@ from roro.types import (
     PriceFrame,
     RegimeFrame,
     ReturnsFrame,
+    RunResult,
     Universe,
     ValidationFrame,
     VolFrame,
@@ -86,3 +89,12 @@ def test_jm_regime_frame_fields() -> None:
     )
     assert f.refit_dates == {}
     assert f.jump_penalty_used == {}
+
+
+def test_attribution_frame_fields_and_runresult_default() -> None:
+    names = {f.name for f in fields(AttributionFrame)}
+    assert names == {
+        "level", "delta", "rollup", "concentration", "pc1", "anchors", "history_global",
+    }
+    assert RunResult.__dataclass_fields__["attribution"].default is None
+    assert "concentration_alerts" in {f.name for f in fields(AlertSet)}

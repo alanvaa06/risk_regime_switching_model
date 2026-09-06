@@ -50,6 +50,14 @@ class EngineConfig:
     jm_max_iter: int = 30
     jm_tol: float = 1e-8
     jm_random_seed: int = 0
+    # Regime attribution (exact per-asset slope decomposition). On by default:
+    # adds output files only, never changes existing numeric artifacts.
+    attribution_enabled: bool = True
+    attribution_label_source: str = "percentile"  # percentile | hmm | jm
+    attribution_anchor_lookback_days: int = 1260
+    attribution_fixed_horizon_days: int = 63
+    attribution_top1_alert: float = 0.5
+    attribution_history_global: bool = False
     fred_api_key: str | None = None
 
     def to_dict(self) -> dict[str, Any]:

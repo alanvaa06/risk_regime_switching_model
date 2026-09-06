@@ -11,6 +11,12 @@ import pandas as pd
 if TYPE_CHECKING:
     from roro.config import EngineConfig
 
+#: Column order of ``AlertSet.concentration_alerts`` and of the ``concentration``
+#: rows in ``alerts.csv``. Single source of truth, also used by ``roro.alerts``.
+CONCENTRATION_ALERT_COLUMNS: tuple[str, ...] = (
+    "date", "segment", "weighting", "top1_series", "top1_share", "hhi", "fragile_flag", "trigger",
+)
+
 
 @dataclass(frozen=True)
 class PriceFrame:
@@ -102,6 +108,24 @@ class CorrelationFrame:
 
 
 @dataclass(frozen=True)
+class AttributionFrame:
+    """Per-asset attribution of the regime slope (see roro/attribution.py).
+
+    level / delta / rollup / pc1 are LAST-DATE snapshots (long format, all cuts x
+    weightings); concentration is FULL HISTORY; history_global is the optional
+    date x series matrix of contributions for the global cut (cap-weighted).
+    """
+
+    level: pd.DataFrame
+    delta: pd.DataFrame
+    rollup: pd.DataFrame
+    concentration: pd.DataFrame
+    pc1: pd.DataFrame
+    anchors: dict[str, pd.Timestamp | None] = field(default_factory=dict)
+    history_global: pd.DataFrame | None = None
+
+
+@dataclass(frozen=True)
 class ValidationFrame:
     rolling_corr_60d: pd.DataFrame
     internal_consistency: pd.DataFrame
@@ -123,6 +147,9 @@ class AlertSet:
             columns=["date", "segment", "from_bucket", "to_bucket"]
         )
     )
+    concentration_alerts: pd.DataFrame = field(
+        default_factory=lambda: pd.DataFrame(columns=list(CONCENTRATION_ALERT_COLUMNS))
+    )
 
 
 @dataclass(frozen=True)
@@ -139,6 +166,7 @@ class RunResult:
     alerts: AlertSet
     regime_hmm: HmmRegimeFrame | None = None
     regime_jm: JmRegimeFrame | None = None
+    attribution: AttributionFrame | None = None
     warnings: list[str] = field(default_factory=list)
     data_fingerprint: dict[str, str] = field(default_factory=dict)
     code_version: dict[str, str] = field(default_factory=dict)

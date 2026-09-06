@@ -23,13 +23,8 @@ external_corr_alert_threshold: 0.3  # F6.4 — alert when |ρ| < threshold
 # Bootstrap
 bootstrap_min_days: 252          # below this, suppress percentile
 
-# Regime attribution
-attribution_enabled: true            # exact per-asset decomposition of the slope; adds files only
-attribution_label_source: percentile # anchor labels: percentile | hmm | jm
-attribution_anchor_lookback_days: 1260  # max lookback when searching the last transition anchor
-attribution_fixed_horizon_days: 63   # parallel fixed-window waterfall (~3M)
-attribution_top1_alert: 0.5          # concentration alert when top-1 share exceeds this
-attribution_history_global: false    # persist the wide per-date c-matrix for the global cut
-
 # Reproducibility
 methodology_version: 1.0.0
+
+# Regime attribution: persist the wide global contribution history (for the jackknife check)
+attribution_history_global: true

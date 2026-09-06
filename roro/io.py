@@ -16,6 +16,7 @@ from roro.config import to_dict as config_to_dict
 from roro.fred_client import FRED_SERIES_IDS, FredClient
 from roro.types import (
     AlertSet,
+    AttributionFrame,
     BetaBySegment,
     CorrelationFrame,
     FredFrame,
@@ -137,6 +138,9 @@ def write_run(
         _write_regime_jm(result.regime_jm, tmp / "regimes_jm.csv")
         _write_jm_refit_log(result.regime_jm, tmp / "jm_refit_log.csv")
 
+    if result.attribution is not None:
+        _write_attribution(result.attribution, tmp)
+
     snapshot = _build_snapshot(result, run_date=run_date, as_of_data_date=as_of_data_date)
     (tmp / "snapshot.json").write_text(
         json.dumps(snapshot, indent=2, default=str), encoding="utf-8"
@@ -251,6 +255,8 @@ def _write_alerts(a: AlertSet, path: Path) -> None:
         rows.append(a.disagreement_events.assign(kind="disagreement"))
     if not a.validation_degradation.empty:
         rows.append(a.validation_degradation.assign(kind="validation_degradation"))
+    if not a.concentration_alerts.empty:
+        rows.append(a.concentration_alerts.assign(kind="concentration"))
     if not rows:
         path.write_text("date,kind,segment\n", encoding="utf-8")
         return
@@ -333,6 +339,24 @@ def _write_jm_refit_log(jf: JmRegimeFrame, path: Path) -> None:
     df.to_csv(path, index=False)
 
 
+_ATTRIBUTION_FILES: tuple[tuple[str, str], ...] = (
+    ("level", "attribution.csv"),
+    ("delta", "attribution_delta.csv"),
+    ("rollup", "attribution_rollup.csv"),
+    ("concentration", "concentration.csv"),
+    ("pc1", "attribution_pc1.csv"),
+)
+
+
+def _write_attribution(af: AttributionFrame, run_dir: Path) -> None:
+    """Five long-format CSVs (+ optional wide global history). Deterministic column order."""
+    for attr, name in _ATTRIBUTION_FILES:
+        frame: pd.DataFrame = getattr(af, attr)
+        frame.to_csv(run_dir / name, index=False)
+    if af.history_global is not None:
+        af.history_global.to_csv(run_dir / "attribution_history_global.csv", index=True)
+
+
 def _safe_float(value: Any) -> float | None:
     try:
         f = float(value)
@@ -379,4 +403,44 @@ def _build_snapshot(
             }
             for seg in jf.label.columns
         }
+    af = result.attribution
+    if af is not None and not af.level.empty:
+        snapshot["attribution"] = _attribution_snapshot(af)
     return snapshot
+
+
+_SNAPSHOT_TOP: int = 3
+
+
+def _attribution_snapshot(af: AttributionFrame) -> dict[str, Any]:
+    """Per cut (cap-weighted, last date): beta, top-3 contributors, concentration, anchor."""
+    out: dict[str, Any] = {}
+    level = af.level[af.level["weighting"] == "cap"]
+    conc = af.concentration[af.concentration["weighting"] == "cap"]
+    for cut in sorted(level["cut"].unique()):
+        rows = level[level["cut"] == cut]
+        order = rows["contribution"].abs().sort_values(ascending=False, kind="stable").index
+        top = rows.reindex(order).head(_SNAPSHOT_TOP)
+        c_last = conc[conc["cut"] == cut]
+        c_row = c_last.iloc[-1] if not c_last.empty else None
+        anchor = af.anchors.get(cut)
+        top3: list[dict[str, Any]] = []
+        for _, r in top.iterrows():
+            top3.append(
+                {
+                    "series": str(r["series"]),
+                    "contribution": _safe_float(r["contribution"]),
+                    "share": _safe_float(r["share"]),
+                    "quadrant": str(r["quadrant"]),
+                }
+            )
+        out[cut] = {
+            "beta_cap": _safe_float(rows["contribution"].sum()),
+            "top3": top3,
+            "hhi": _safe_float(c_row["hhi"]) if c_row is not None else None,
+            "top1_series": str(c_row["top1_series"]) if c_row is not None else None,
+            "top1_share": _safe_float(c_row["top1_share"]) if c_row is not None else None,
+            "fragile_flag": bool(c_row["fragile_flag"]) if c_row is not None else None,
+            "anchor_date": anchor.strftime("%Y-%m-%d") if anchor is not None else None,
+        }
+    return out

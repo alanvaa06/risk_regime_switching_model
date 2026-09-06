@@ -3,7 +3,7 @@
 > A daily, reproducible, academically-anchored classifier of the global "risk-on / risk-off" (RoRo) state, estimated from the cross-sectional relationship between realized return and realized volatility across 64 country-level index series, segmented into 10 cuts, and validated against external risk-cycle proxies and internal composite aggregates.
 
 **Author:** Alan Vazquez, CFA
-**Status:** v1.1 — *diagnostic only* (no predictive layer). Adds two optional, off-by-default regime overlays — an **HMM / Markov-switching** model and a **Statistical Jump Model** — alongside the production-default percentile/tercile classifier, plus an expanded interactive report (per-overlay state-probability figures + a Percentile ↔ HMM ↔ JM band toggle + volatility-breadth heatmaps). All three classifiers are scored through the same acceptance gates.
+**Status:** v1.1 — *diagnostic only* (no predictive layer). Adds two optional, off-by-default regime overlays — an **HMM / Markov-switching** model and a **Statistical Jump Model** — alongside the production-default percentile/tercile classifier, plus **regime attribution** — an exact, residual-free per-asset decomposition of the slope with its own five report figures, on by default and additive only — and an expanded interactive report (per-overlay state-probability figures + a Percentile ↔ HMM ↔ JM band toggle + volatility-breadth heatmaps). All three classifiers are scored through the same acceptance gates.
 **License of data:** proprietary (`data.xlsx` is git-ignored); external proxies are free (FRED).
 
 ![Segment β with regime bands](docs/assets/report_beta_timeseries.png)
@@ -200,6 +200,24 @@ For the scatter plots, each individual country-asset's sensitivity to the market
 
 This is distinct from the segment-level cross-sectional slope of §5.2 — it is a per-series market beta used only to position points on the "beta vs return" scatter.
 
+### 5.8 Regime attribution (`roro/attribution.py`)
+
+The slope of §5.2 is a WLS fit, and a WLS slope is **linear in the returns**. That makes it decomposable exactly — no residual, no approximation:
+
+```
+β̂ = Σ_i c_i ,   c_i = h_i · y_i ,   h_i = w_i (x_i − x̄) / D
+x̄ = Σ_i w_i x_i ,   D = Σ_i w_i (x_i − x̄)² ,   Σ_i w_i = 1
+```
+
+Because `Σ_i w_i (x_i − x̄) = 0`, the intercept drops out and the per-asset contributions `c_i` sum to the published `β̂`. The attribution consumes the *identical* daily panel the slope is fitted on; `regression.py` is never touched.
+
+- **Quadrants.** Each series is tagged by where it sits relative to the weighted mean vol `x̄` and the sign of its return: `HI/+`, `HI/−`, `LO/+`, `LO/−`. `HI/+` and `LO/−` push the slope up (the risk-on signature); `HI/−` and `LO/+` push it down.
+- **Δβ̂ waterfall.** The move in `β̂` from an anchor date to today is split into four additive effects — **return** (the same names earning differently), **position** (names moving in vol space, i.e. changed leverage `h_i`), **interaction** (the cross term), and **universe** (series entering or leaving the cut). The anchor is the last regime transition (searched back at most `attribution_anchor_lookback_days`); a fixed `attribution_fixed_horizon_days` window is computed in parallel.
+- **Concentration.** Per (date, cut, weighting): the **HHI** of contribution shares, the **top-1** and **top-5** shares, and a **leave-one-out** slope `beta_ex_top1` recomputed with the largest contributor dropped. `fragile_flag` (cap-weighted only) marks the days where dropping that one name changes the regime read — the honest robustness statement about a single-name-driven slope. Concentration alerts land in `alerts.csv` (kind `concentration`); fragility alerts are suppressed on thin cuts.
+- **PC1 cross-check.** Per-series squared PC1 loadings against the cut's PC1 variance share, plus a `decoupling` measure — a series carrying the slope while sitting off the dominant co-movement axis is a different story from one that simply rides the factor.
+
+Attribution is **on by default** (`attribution_enabled: true`) and is **additive only**: it writes new artifacts and never alters an existing number. Setting `attribution_enabled: false` reproduces every legacy artifact byte-identically.
+
 ---
 
 ## 6. System architecture
@@ -217,9 +235,11 @@ This is distinct from the segment-level cross-sectional slope of §5.2 — it is
         ▼
    ┌──────────────────────── roro.engine.run ────────────────────────┐
    │ returns → segments → regression → classify [→ classify_hmm*]      │
-   │         → correlation → validation → tripwire → alerts            │
+   │         → correlation → validation → tripwire → attribution†      │
+   │         → alerts                                                  │
    └──────────────────────────────────────────────────────────────────┘
             * optional HMM overlay, only when hmm_enabled (§5.4.1)
+            † regime attribution, on by default; adds artifacts only (§5.5)
         │
         ▼
    roro.io.write_run   →  outputs/<run-date>/*.csv  +  snapshot.json
@@ -235,13 +255,13 @@ This is distinct from the segment-level cross-sectional slope of §5.2 — it is
 - **Thin CLI over a library.** `roro/cli.py` (Click) exposes `run`, `backtest`, and `report`; everything is importable as a library.
 - **Atomic writes.** Run output is written to a `<date>.tmp` directory and renamed on success, so a partial run never corrupts an existing one.
 
-**Engine module map:** `config` (frozen `EngineConfig` + YAML loader), `types` (frozen dataclasses), `io` (Excel/FRED ingest + run writer), `validators`, `fred_client` (Protocol + live + mock), `returns`, `segments`, `regression`, `classify`, `regime_hmm` (optional HMM overlay, §5.4.1), `jump_model` + `regime_jm` (optional vendored Jump Model overlay, §5.4.2), `correlation`, `validation`, `tripwire`, `alerts`, `engine` (orchestrator), `backtest` (acceptance gates + multi-method comparison), `cli`. The report layer adds `roro/report/vol_breadth.py` (realized-vol percentile matrix) alongside `load → figures → html → orchestrate`.
+**Engine module map:** `config` (frozen `EngineConfig` + YAML loader), `types` (frozen dataclasses), `io` (Excel/FRED ingest + run writer), `validators`, `fred_client` (Protocol + live + mock), `returns`, `segments`, `regression`, `classify`, `regime_hmm` (optional HMM overlay, §5.4.1), `jump_model` + `regime_jm` (optional vendored Jump Model overlay, §5.4.2), `correlation`, `validation`, `tripwire`, `attribution` (exact per-asset decomposition of the slope + its own orchestrator over cuts, weightings and dates, §5.5), `alerts`, `engine` (orchestrator), `backtest` (acceptance gates + multi-method comparison), `cli`. The report layer adds `roro/report/vol_breadth.py` (realized-vol percentile matrix) and `roro/report/attribution_figs.py` (the five attribution figures) alongside `load → figures → html → orchestrate`.
 
 ---
 
 ## 7. The interactive report
 
-`roro report` consumes a run directory plus the source `data.xlsx` and emits a single self-contained interactive HTML file (Plotly, loaded from CDN). It renders **five figures for a standard run, plus one state-probability figure for each regime overlay present in the run** (one for HMM, one for JM):
+`roro report` consumes a run directory plus the source `data.xlsx` and emits a single self-contained interactive HTML file (Plotly, loaded from CDN). It renders **up to 10 figures on a standard run** — the five core figures plus the **five regime-attribution figures**, each of the latter gated independently on the presence of its artifact in the run directory — and one further state-probability figure for each regime overlay present in the run (one for HMM, one for JM):
 
 1. **Risk-return scatter** — x = EWMA annualized volatility, y = 3-month total log return. One marker per country-asset, colored **blue (DM) / green (EM)**, with a **dashed OLS trend line and a 95% confidence ribbon per group**. A **date slider** (trailing 252 business days) animates the snapshot through time; a **segment dropdown** (Full / DM / EM / DM_Eq / EM_Eq / DM_FI / EM_FI) filters the points and **retightens both axes to the selected cluster**.
 2. **Beta-return scatter** — identical, with x = per-series 63-day beta vs the cap-weighted global proxy (§5.7).
@@ -249,6 +269,14 @@ This is distinct from the segment-level cross-sectional slope of §5.2 — it is
 4. **HMM / JM regime probabilities** *(one figure per enabled overlay)* — a per-segment **stacked area of the three state probabilities** (Risk-off / Transitional / Risk-on, summing to 1.0) over full history: filtered probabilities for the HMM, soft state probabilities for the continuous JM (one-hot steps for the discrete JM). A thin dominant band signals low model confidence; the warmup region is left blank. The soft view the percentile hard labels cannot express.
 5. **Volatility breadth (sorted-rank)** — a heatmap answering *how many* assets trade at elevated volatility versus their own history. Each day, the cross-section of per-series **63-day realized-vol percentiles** (ranked against each series' expanding ≥5-year history) is **sorted descending**; the thickness of the bright band at the top is the count of stressed assets. Plasma colorscale; an **All / Eq / FI class toggle**.
 6. **Volatility percentile by asset** — the same data as a per-series identity heatmap (one fixed row per series, ordered by mean percentile), showing *which* assets are stressed and letting you track one over time. Same Plasma scale and class toggle.
+
+The next five figures render only when the run carries the matching attribution artifact (§5.8, §11); a run with `attribution_enabled: false` simply omits them.
+
+7. **Slope attribution** — a horizontal bar chart of the top-N per-asset contributions `c_i` to the selected cut's slope on the run date, colored by quadrant (`HI/+` `HI/−` `LO/+` `LO/−`). The chart title carries the reconstructed `β̂`, so the bars visibly sum to the published number. Cut and weighting (cap / eq) dropdowns.
+8. **Δβ̂ waterfall** — the move in `β̂` **since the last regime transition** decomposed into its four additive effects (return / position / interaction / universe), bridging `β̂_anchor` to `β̂_t`. The anchor date and both endpoint labels are on the chart; the fixed-horizon variant is available in the CSV.
+9. **Vol vs return, sized by |contribution|** — the familiar risk-return cross-section, but each marker is **sized by `|c_i|`** and the fitted line is the **exact WLS slope** the engine publishes (not a re-fit). Reference lines at `x̄` and `ȳ` split the plane into the four quadrants, so the names doing the work are visible at a glance.
+10. **Concentration of the slope** — the full history of **top-1 share** and **HHI** for the selected cut and weighting, shaded with the tercile regime bands. This is the figure that shows whether today's reading rests on one name or on the cross-section.
+11. **PC1 loadings vs variance share** — per-series squared PC1 loadings for the selected cut against the cut's PC1 variance share, with the `decoupling` measure: a large contributor sitting off the dominant co-movement axis is telling a different story from one riding the common factor.
 
 Figures 5–6 use **simple realized volatility** (rolling 63-day stdev × √252), ranked per series against its **expanding, minimum-5-year** history — distinct from the engine's EWMA vol used for the slope regression. Both heatmaps are always present (they need only the xlsx); the warmup region (before each series has 5 years of history) is trimmed from the x-axis.
 
@@ -375,6 +403,19 @@ Each produces `outputs/<run-date>/` (see §11). The run emits `regimes.csv` alwa
 
 > **Tuning the overlays** *(optional — the defaults are sensible)*: HMM — `hmm_refit_interval_days` (21), `hmm_min_history_days` (252), `hmm_switching_variance` (true). JM — `jm_jump_penalty` (50.0; the persistence knob — higher = fewer regime switches), `jm_refit_interval_days` (21), `jm_window` (`expanding` or `rolling`), `jm_random_seed` (0; determinism), `jm_continuous` (false → hard one-hot bands; true → soft simplex probabilities). See `configs/jm-eval.yaml` for a fully-populated example.
 
+### Regime attribution
+
+Attribution (§5.8) is **on by default** and adds artifacts only — it never changes an existing number, so a run with it on and one with it off agree byte-for-byte on every legacy file. Six keys in the config YAML:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `attribution_enabled` | `true` | Master switch. `false` skips the whole stage and every attribution artifact. |
+| `attribution_label_source` | `percentile` | Which classifier supplies the labels used to find the waterfall anchor: `percentile` \| `hmm` \| `jm`. |
+| `attribution_anchor_lookback_days` | `1260` | Maximum lookback (~5Y) when searching backwards for the last regime transition to anchor on. |
+| `attribution_fixed_horizon_days` | `63` | The parallel fixed-window (~3M) waterfall, computed alongside the anchored one. |
+| `attribution_top1_alert` | `0.5` | Concentration alert threshold: a top-1 contribution share above this on a bucket-transition day raises an alert in `alerts.csv`. |
+| `attribution_history_global` | `false` | Persist the wide per-date per-asset contribution matrix for the `global` cut (`attribution_history_global.csv`). Off — it is the one artifact that is genuinely large. |
+
 ### Build the report
 
 ```bash
@@ -412,13 +453,19 @@ A run directory (`outputs/<run-date>/`) contains:
 | `correlation.csv` | Per segment: average pairwise correlation, PC1 variance share. |
 | `external_validation.csv` | Rolling-60d ρ of each segment slope vs each FRED proxy. |
 | `tripwire.csv` | The 1-month fast-signal mirror of the slope. |
-| `alerts.csv` | Bucket transitions, disagreement events, validation-degradation events (HMM-label transitions too when the overlay is on). |
+| `alerts.csv` | Bucket transitions, disagreement events, validation-degradation events (HMM-label transitions too when the overlay is on), plus kind `concentration` when attribution is on: `date, segment, weighting, top1_series, top1_share, hhi, fragile_flag, trigger` with `trigger ∈ {transition_day, fragile}` (cap-weighted only; fragility alerts suppressed on thin cuts). |
+| `attribution.csv` | *(only when `attribution_enabled`)* Level rows — the exact per-asset decomposition of the run-date slope for every cut × weighting: `date, cut, weighting, series, block, latam, vol, ret3m, weight, leverage, contribution, share, quadrant, xbar, ybar`. The `contribution` column sums to the published `beta`. |
+| `attribution_delta.csv` | *(only when `attribution_enabled`)* Δβ̂ waterfalls, both horizons: `date, cut, weighting, horizon, anchor_date, label_anchor, label_t, beta_anchor, beta_t, series, block, effect_return, effect_position, effect_interaction, effect_universe, delta_total`. `horizon ∈ {anchor, fixed63}`. |
+| `attribution_rollup.csv` | *(only when `attribution_enabled`)* Contribution sums by group: `date, cut, weighting, group_kind, group, contribution_sum, n` (`group_kind ∈ {block, quadrant, latam}`). |
+| `concentration.csv` | *(only when `attribution_enabled`)* Full-history concentration metrics: `date, cut, weighting, n, beta, hhi, top1_series, top1_share, top5_share, beta_ex_top1, pct_today, pct_ex_top1, fragile_flag`. `beta_ex_top1` is the leave-one-out slope; `fragile_flag` / `pct_ex_top1` are cap-only by construction. |
+| `attribution_pc1.csv` | *(only when `attribution_enabled`)* Run-date PC1 cross-check: `date, cut, series, pc1_load_sq, var_share, decoupling, row_mean_corr`. |
+| `attribution_history_global.csv` | *(only when `attribution_history_global`)* The wide per-date per-asset contribution matrix for the `global` cut — the input to an exact historical jackknife. Off by default; it is the one large artifact. |
 | `regimes_hmm.csv` | *(only when `hmm_enabled`)* Per (date, segment): HMM state, label, the three filtered probabilities, confidence, cold-start and thin-cut flags. |
 | `hmm_refit_log.csv` | *(only when `hmm_enabled`)* The dates on which HMM parameters were re-estimated, per segment (refit-cadence provenance). |
 | `regimes_jm.csv` | *(only when `jm_enabled`)* Per (date, segment): JM state, label, the three state probabilities (one-hot for discrete / soft for continuous), confidence, cold-start and thin-cut flags. Same schema as `regimes_hmm.csv`. |
 | `jm_refit_log.csv` | *(only when `jm_enabled`)* The dates on which JM centroids were re-estimated, per segment. |
-| `snapshot.json` | Resolved config, data fingerprint (SHA-256 + mtime), FRED hashes, code version, warnings; a `regime_hmm` / `regime_jm` block when the respective overlay is on. |
-| `report.html` | (from `roro report`) the interactive dashboard — five figures, plus one state-probability figure per enabled overlay (HMM / JM). |
+| `snapshot.json` | Resolved config, data fingerprint (SHA-256 + mtime), FRED hashes, code version, warnings; a `regime_hmm` / `regime_jm` block when the respective overlay is on; an `attribution` block (per cut: `beta_cap`, `top3` contributors with share and quadrant, `hhi`, `top1_series`, `top1_share`, `fragile_flag`, `anchor_date`) when attribution is on. |
+| `report.html` | (from `roro report`) the interactive dashboard — up to 10 figures (five core + five attribution), plus one state-probability figure per enabled overlay (HMM / JM). |
 
 When `roro backtest` runs with an overlay enabled, it additionally writes `acceptance_report_hmm.json` / `acceptance_report_jm.json` and `acceptance_compare.json` (the gate-by-gate `{percentile, hmm, jm}` comparison) alongside `acceptance_report.json`.
 
@@ -434,19 +481,22 @@ Known v1.0 simplifications:
 - **Local-currency volatility only.** FX risk is embedded, not separated. No FX overlay.
 - **Simplified correlation pillar.** A static PC1/avg-pairwise proxy stands in for the full Beber et al. Regime-Switching Dynamic Correlation model.
 - **Composite price wiring for internal consistency is partial** in the engine v1.
+- **The cap-weighted slope is concentration-driven, and the estimator is not yet robust to it.** On the 2026-05-26 real-data run, **South Korea alone carries 72% of the global cap-weighted slope**; over the full 4,477-day history, dropping the single largest contributor **flips the sign of the global cap slope on 17% of days**. This is a property of the WLS estimator under static cap weights, now measured rather than assumed. A robust-slope estimator (Huber / trimmed / cap-on-weight) is **deliberately deferred** — decision **D3** — because the pre-registered trigger (top-1 share > 0.5 on more than 20% of global-cap days) came in at 19.25% and did not fire. It clears by 0.75pp, so the deferral is provisional; the sign-flip rate, not the share threshold, is the sharper argument for reopening it. Full evidence: `docs/analysis/2026-09-05-attribution-memo.md`.
+- **The `fragile` concentration alert is not yet persistence-gated.** It fires on 27.74% of global-cap days (14,632 of 15,749 concentration rows in the full-history `alerts.csv`), which is too often to act on as a daily alert. Fragility alerts are already suppressed on thin cuts (spec §11); the remaining follow-up is a persistence gate — require N consecutive fragile days, or a fragile day coinciding with a bucket transition — before the alert is emitted.
 
 **Shipped since v1.0 (v1.1):**
 
 - **HMM / Markov-switching regime overlay** (`roro/regime_hmm.py`, §5.4.1) — optional, off by default; causal (filtered + point-in-time monthly refit); compared to the percentile classifier through the acceptance gates. Percentile remains the production default per the 2008–2026 backtest.
 - **Statistical Jump Model regime overlay** (`roro/jump_model.py` + `roro/regime_jm.py`, §5.4.2) — optional, off by default; a vendored, dependency-free, deterministic, causal 3-state jump model (fixed jump penalty for structural persistence). Scored against percentile and HMM through the same gates; byte-identical output verified. Off by default pending the G5-without-G3-regression promotion decision.
 - **Expanded report** — per-overlay state-probability figures, the 3-way Percentile ↔ HMM ↔ JM band toggle, and the two volatility-breadth heatmaps (§7); `assemble` refactored to explicit per-figure specs.
+- **Regime attribution** (`roro/attribution.py` + `roro/report/attribution_figs.py`, §5.8) — the exact, residual-free per-asset decomposition of the slope, the four-effect Δβ̂ waterfall, the concentration history and the PC1 cross-check, with five report figures. **On by default**; additive only (`attribution_enabled: false` reproduces every legacy artifact byte-identically).
 
 Roadmap:
 
 - **v1.1 (remaining)** — GFP (Miranda-Agrippino & Rey global financial cycle factor) as a sixth external validator; rolling/time-varying cap weights; wire the external/internal validation through the HMM labels so gates G1/G2/G6 discriminate the two methods (currently method-shared).
 - **HMM tuning** — recover G3 event recognition (e.g. tune transition-matrix persistence or add a confirmation overlay) so the persistence win on G5 doesn't cost sharp-event detection; revisit the strict gate thresholds, which the percentile baseline also fails on the full 2008–2026 window.
 - **v2.0** — predictive layer based on Beber-style transition *persistence* (the HMM transition matrix is a natural substrate), only after the diagnostic validates against the external proxies and internal aggregates.
-- **Engineering** — split the visualization `figures.py` into focused submodules; address interactive-report payload size for long windows (the heatmaps add ~25 MB on the full-history run).
+- **Engineering** — split the visualization `figures.py` into focused submodules; address interactive-report payload size for long windows (the full-history report is ~56.5 MB: the heatmaps add ~25 MB, the attribution figures ~4.2 MB / +8%).
 
 ---
 

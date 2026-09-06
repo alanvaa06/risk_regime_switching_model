@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 
 from roro.classify import (
+    bucket_label,
     classify,
     direction_flag,
     quintile_label,
@@ -71,3 +72,11 @@ def test_classify_full_pipeline_produces_all_frames() -> None:
         assert set(frame.columns) >= {"global", "DM", "LatAm"}
     assert rf.thin_cut_flag.loc[idx[-1], "LatAm"]
     assert not rf.thin_cut_flag.loc[idx[-1], "global"]
+
+
+def test_bucket_label_tercile_and_nan() -> None:
+    assert bucket_label(0.1, BucketScheme.TERCILE) == "Risk-off"
+    assert bucket_label(0.5, BucketScheme.TERCILE) == "Transitional"
+    assert bucket_label(0.9, BucketScheme.TERCILE) == "Risk-on"
+    assert bucket_label(float("nan"), BucketScheme.TERCILE) == "Unknown"
+    assert bucket_label(0.9, BucketScheme.QUINTILE) == "Q5"

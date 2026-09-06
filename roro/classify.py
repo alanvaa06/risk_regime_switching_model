@@ -69,6 +69,11 @@ def _bucket(p: float, scheme: BucketScheme) -> str:
     return asym_label(p)
 
 
+def bucket_label(p: float, scheme: BucketScheme) -> str:
+    """Public bucket label for a percentile under `scheme` (used by attribution fragility)."""
+    return _bucket(p, scheme)
+
+
 def direction_flag(beta: pd.Series, *, lookback_days: int) -> pd.Series:
     def _flag(window: np.ndarray[Any, np.dtype[np.float64]]) -> float:
         if len(window) < _MIN_DIRECTION_WINDOW or np.isnan(window).any():
