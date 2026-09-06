@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pandas as pd
+
 from roro.report.attribution_figs import (
     attribution_bars,
     attribution_scatter,
@@ -22,6 +24,10 @@ from roro.report.figures import (
 )
 from roro.report.html import FigureSpec, assemble
 from roro.report.load import DEFAULT_WINDOW, load_bundle
+
+
+def _has_rows(df: pd.DataFrame | None) -> bool:
+    return df is not None and not df.empty
 
 
 def build_report(
@@ -71,17 +77,20 @@ def build_report(
         vol_pct_asset_heatmap(bundle), "fig_vol_assets",
         "Volatility percentile by asset",
     ))
-    if bundle.attribution_level is not None and not bundle.attribution_level.empty:
-        specs.extend([
-            FigureSpec(attribution_bars(bundle), "fig_attrib_bars", "Slope attribution"),
-            FigureSpec(attribution_waterfall(bundle), "fig_attrib_waterfall", "Δβ̂ waterfall"),
-            FigureSpec(attribution_scatter(bundle), "fig_attrib_scatter",
-                       "Vol vs return, sized by |contribution|"),
-            FigureSpec(concentration_timeseries(bundle), "fig_concentration_ts",
-                       "Concentration of the slope"),
-            FigureSpec(pc1_loadings_bars(bundle), "fig_pc1_loadings",
-                       "PC1 loadings vs variance share"),
-        ])
+    if _has_rows(bundle.attribution_level):
+        specs.append(FigureSpec(attribution_bars(bundle), "fig_attrib_bars", "Slope attribution"))
+    if _has_rows(bundle.attribution_delta):
+        specs.append(FigureSpec(attribution_waterfall(bundle), "fig_attrib_waterfall",
+                                "Δβ̂ waterfall"))
+    if _has_rows(bundle.attribution_level):
+        specs.append(FigureSpec(attribution_scatter(bundle), "fig_attrib_scatter",
+                                "Vol vs return, sized by |contribution|"))
+    if _has_rows(bundle.concentration):
+        specs.append(FigureSpec(concentration_timeseries(bundle), "fig_concentration_ts",
+                                "Concentration of the slope"))
+    if _has_rows(bundle.attribution_pc1):
+        specs.append(FigureSpec(pc1_loadings_bars(bundle), "fig_pc1_loadings",
+                                "PC1 loadings vs variance share"))
     html = assemble(
         specs,
         run_date=bundle.run_date,

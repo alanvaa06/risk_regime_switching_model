@@ -138,10 +138,29 @@ def test_build_report_without_attribution_unchanged(
 def test_build_report_skips_attribution_when_csv_has_only_header(
     attribution_run_dir: Path, tiny_xlsx: Path, tmp_path: Path
 ) -> None:
-    lvl = attribution_run_dir / "attribution.csv"
-    lvl.write_text(pd.read_csv(lvl).iloc[:0].to_csv(index=False), encoding="utf-8")
+    for name in (
+        "attribution.csv",
+        "attribution_delta.csv",
+        "attribution_rollup.csv",
+        "concentration.csv",
+        "attribution_pc1.csv",
+    ):
+        f = attribution_run_dir / name
+        f.write_text(pd.read_csv(f).iloc[:0].to_csv(index=False), encoding="utf-8")
     out = tmp_path / "r.html"
     build_report(attribution_run_dir, tiny_xlsx, out, window=21)
     html = out.read_text(encoding="utf-8")
     assert "Slope attribution" not in html
     assert html.count('class="plotly-graph-div"') == 5
+
+
+def test_build_report_skips_waterfall_when_delta_empty(
+    attribution_run_dir: Path, tiny_xlsx: Path, tmp_path: Path
+) -> None:
+    dl = attribution_run_dir / "attribution_delta.csv"
+    dl.write_text(pd.read_csv(dl).iloc[:0].to_csv(index=False), encoding="utf-8")
+    out = tmp_path / "r.html"
+    build_report(attribution_run_dir, tiny_xlsx, out, window=21)
+    html = out.read_text(encoding="utf-8")
+    assert "Slope attribution" in html and "Δβ̂ waterfall" not in html
+    assert html.count('class="plotly-graph-div"') == 9
