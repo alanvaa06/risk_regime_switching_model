@@ -62,6 +62,12 @@ def test_golden_2024_q1(tiny_xlsx: Path, tmp_path: Path, request: pytest.Fixture
         "correlation.csv",
         "external_validation.csv",
         "tripwire.csv",
+        "alerts.csv",
+        "attribution.csv",
+        "attribution_delta.csv",
+        "attribution_rollup.csv",
+        "concentration.csv",
+        "attribution_pc1.csv",
     )
     for csv in csvs:
         assert filecmp.cmp(actual / csv, GOLDEN_DIR / csv, shallow=False), (
