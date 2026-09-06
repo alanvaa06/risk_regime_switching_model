@@ -11,6 +11,12 @@ import pandas as pd
 if TYPE_CHECKING:
     from roro.config import EngineConfig
 
+#: Column order of ``AlertSet.concentration_alerts`` and of the ``concentration``
+#: rows in ``alerts.csv``. Single source of truth, also used by ``roro.alerts``.
+CONCENTRATION_ALERT_COLUMNS: tuple[str, ...] = (
+    "date", "segment", "weighting", "top1_series", "top1_share", "hhi", "fragile_flag", "trigger",
+)
+
 
 @dataclass(frozen=True)
 class PriceFrame:
@@ -142,10 +148,7 @@ class AlertSet:
         )
     )
     concentration_alerts: pd.DataFrame = field(
-        default_factory=lambda: pd.DataFrame(
-            columns=["date", "segment", "weighting", "top1_series", "top1_share",
-                     "hhi", "fragile_flag", "trigger"]
-        )
+        default_factory=lambda: pd.DataFrame(columns=list(CONCENTRATION_ALERT_COLUMNS))
     )
 
 

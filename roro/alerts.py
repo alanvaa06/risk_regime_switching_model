@@ -5,6 +5,7 @@ from __future__ import annotations
 import pandas as pd
 
 from roro.types import (
+    CONCENTRATION_ALERT_COLUMNS,
     AlertSet,
     AttributionFrame,
     CorrelationFrame,
@@ -15,9 +16,6 @@ from roro.types import (
 )
 
 _DISAGREEMENT_CORR_THRESHOLD: float = 0.6
-_CONCENTRATION_COLUMNS: list[str] = [
-    "date", "segment", "weighting", "top1_series", "top1_share", "hhi", "fragile_flag", "trigger",
-]
 _DEFAULT_TOP1_ALERT: float = 0.5
 
 
@@ -49,7 +47,7 @@ def detect_alerts(
         concentration_alerts=(
             _concentration_alerts(attribution.concentration, transitions, top1_alert=top1_alert)
             if attribution is not None
-            else pd.DataFrame(columns=_CONCENTRATION_COLUMNS)
+            else pd.DataFrame(columns=list(CONCENTRATION_ALERT_COLUMNS))
         ),
     )
 
@@ -59,7 +57,7 @@ def _concentration_alerts(
 ) -> pd.DataFrame:
     """Cap-weighted rows where (top1_share > threshold on a bucket-transition day) or fragile."""
     if conc.empty:
-        return pd.DataFrame(columns=_CONCENTRATION_COLUMNS)
+        return pd.DataFrame(columns=list(CONCENTRATION_ALERT_COLUMNS))
     cap = conc[conc["weighting"] == "cap"]
     if transitions.empty:
         on_transition = pd.Series(False, index=cap.index)
@@ -73,11 +71,11 @@ def _concentration_alerts(
     fragile = cap["fragile_flag"].astype(bool)
     hit = cap[(on_transition & concentrated) | fragile].copy()
     if hit.empty:
-        return pd.DataFrame(columns=_CONCENTRATION_COLUMNS)
+        return pd.DataFrame(columns=list(CONCENTRATION_ALERT_COLUMNS))
     trig_transition = (on_transition & concentrated).loc[hit.index]
     hit["trigger"] = ["transition_day" if t else "fragile" for t in trig_transition]
     hit = hit.rename(columns={"cut": "segment"})
-    return hit[_CONCENTRATION_COLUMNS].sort_values(
+    return hit[list(CONCENTRATION_ALERT_COLUMNS)].sort_values(
         ["date", "segment"], kind="stable"
     ).reset_index(drop=True)
 
