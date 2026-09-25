@@ -23,11 +23,12 @@ from roro.io import (
 from roro.regime_hmm import classify_hmm
 from roro.regime_jm import classify_jm
 from roro.regression import compute_beta_by_segment
-from roro.resume import verify_beta_history
+from roro.resume import copied_through, verify_beta_history
 from roro.returns import daily_log_returns, ewma_vol, total_return_3m
 from roro.segments import partition
 from roro.tripwire import compute_tripwire_signal
 from roro.types import (
+    BetaBySegment,
     HmmRegimeFrame,
     JmRegimeFrame,
     RegimeFrame,
@@ -63,8 +64,11 @@ def run(
     alerts -> write run.
 
     data_until: drop prices after this date (YYYY-MM-DD) before any computation.
-    resume: checkpoint state. Betas up to its date must equal the checkpoint's
-    (else HistoryRevisedError, nothing written); HMM/JM then resume from it.
+    resume: checkpoint state. HMM/JM copy their closed refit blocks from it, so
+    betas must equal the checkpoint's through the last copied date (else
+    HistoryRevisedError, nothing written). Later rows, such as a restated last
+    checkpoint row, may differ: they are recomputed. With nothing copied (no
+    overlay enabled or reusable) the check is skipped.
     """
     warnings: list[str] = []
 
@@ -104,9 +108,11 @@ def run(
         min_n=cfg.min_n_per_cut,
     )
 
-    # 4b) Resume guard: the checkpoint is only valid if history is unchanged.
+    # 4b) Resume guard: history the overlays copy from the checkpoint must be unchanged.
     if resume is not None:
-        verify_beta_history(beta_long(beta), resume.beta_series, through=resume.checkpoint_date)
+        through = _resume_guard_through(beta, cfg, resume)
+        if through is not None:
+            verify_beta_history(beta_long(beta), resume.beta_series, through=through)
 
     # 5) Classify percentile/tercile/quintile/direction per segment.
     regime = classify(
@@ -243,6 +249,37 @@ def run(
         force=force,
     )
     return result
+
+
+def _resume_guard_through(
+    beta: BetaBySegment, cfg: EngineConfig, resume: ResumeState
+) -> pd.Timestamp | None:
+    """Latest date whose beta a resumed HMM/JM walk-forward reuses; None if nothing is.
+
+    The MAX over enabled overlays and segments with a prior: verify_beta_history
+    checks every segment up to one date, so it must cover the longest copied range.
+    """
+    overlays = [
+        (resume.hmm, cfg.hmm_min_history_days, cfg.hmm_refit_interval_days, cfg.hmm_enabled),
+        (resume.jm, cfg.jm_min_history_days, cfg.jm_refit_interval_days, cfg.jm_enabled),
+    ]
+    cutoffs: list[pd.Timestamp] = []
+    for priors, min_history, interval, enabled in overlays:
+        if not enabled or priors is None:
+            continue
+        for seg, bf in beta.by_segment.items():
+            prior = priors.get(seg)
+            if prior is None:
+                continue
+            cut = copied_through(
+                bf.cap_wtd["beta"].dropna().index,
+                prior.last_date,
+                min_history_days=min_history,
+                refit_interval_days=interval,
+            )
+            if cut is not None:
+                cutoffs.append(cut)
+    return max(cutoffs) if cutoffs else None
 
 
 def _anchor_labels(

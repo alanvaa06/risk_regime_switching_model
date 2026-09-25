@@ -8,6 +8,7 @@ import pytest
 
 from roro.resume import (
     HistoryRevisedError,
+    copied_through,
     prior_refits_before,
     resume_block_start,
     seed_prior_rows,
@@ -38,6 +39,27 @@ def test_resume_block_start(n_old: int, expected: int | None) -> None:
         idx, idx[n_old - 1], min_history_days=252, refit_interval_days=63
     )
     assert got == expected
+
+
+@pytest.mark.parametrize(
+    ("n_old", "expected_pos"),
+    [
+        (100, None),  # warmup: nothing copied
+        (252, None),  # first new row is the first block start: nothing copied
+        (253, 251),  # block 0 open -> rows [0, 252) copied, last copied = index[251]
+        (316, 314),  # block 1 open at 315
+        (500, None),  # no new rows
+    ],
+)
+def test_copied_through(n_old: int, expected_pos: int | None) -> None:
+    idx = _idx(500)
+    got = copied_through(idx, idx[n_old - 1], min_history_days=252, refit_interval_days=63)
+    assert got == (None if expected_pos is None else idx[expected_pos])
+
+
+def test_copied_through_zero_warmup_block_zero_is_none() -> None:
+    idx = _idx(100)
+    assert copied_through(idx, idx[9], min_history_days=0, refit_interval_days=63) is None
 
 
 def _prior(n: int = 10) -> SegmentPrior:

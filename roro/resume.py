@@ -40,6 +40,30 @@ def resume_block_start(
     return min_history_days + k * refit_interval_days
 
 
+def copied_through(
+    index: pd.Index,
+    last_date: pd.Timestamp,
+    *,
+    min_history_days: int,
+    refit_interval_days: int,
+) -> pd.Timestamp | None:
+    """Last date whose data a resumed walk-forward reuses from the checkpoint.
+
+    Rows before the open block are copied and every reused fit (including the
+    fallback refit) sees only data before it, so beta must be unchanged through
+    ``index[r_open - 1]``. None when nothing is reused (see resume_block_start).
+    """
+    r_open = resume_block_start(
+        index,
+        last_date,
+        min_history_days=min_history_days,
+        refit_interval_days=refit_interval_days,
+    )
+    if r_open is None or r_open == 0:  # 0 only with min_history_days=0: nothing copied
+        return None
+    return pd.Timestamp(index[r_open - 1])
+
+
 def seed_prior_rows(
     prior: SegmentPrior, dates: pd.Index
 ) -> tuple[NDArray[np.float64], NDArray[np.bool_]]:

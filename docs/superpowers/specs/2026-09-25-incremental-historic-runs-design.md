@@ -86,9 +86,10 @@ The CLI and the script both call `run_update()`, so they cannot drift apart.
    | 4 | checkpoint date ≥ `data_last` | UP_TO_DATE | "already processed through <date>" (+ hint to use `type_run='all'` when `data_until` < checkpoint date) |
    | 5 | otherwise | RESUME | "resuming from <checkpoint>, N new dates" |
 
-5. UP_TO_DATE → print and exit. Nothing is written.
+5. UP_TO_DATE → print and exit. Nothing is recomputed (a missing `report.html` is rebuilt); the outcome's `run_dir` is the checkpoint folder.
 6. RESUME → `read_resume_state(checkpoint)` → `engine.run(..., resume=state)`.
-   - After betas are computed, compare them on all dates ≤ checkpoint date with the checkpoint's `beta_series.csv`: same date set, same (segment, scheme) keys, `|Δ| <= 1e-12`, NaN == NaN. On mismatch, raise `HistoryRevisedError`. `run_update` catches it, prints "history revised in data.xlsx (first mismatch <date> <segment>) -> full rerun", and reruns FULL.
+   - After betas are computed, compare them with the checkpoint's `beta_series.csv` on all dates ≤ the **last copied date**: same date set, same (segment, scheme) keys, `|Δ| <= 1e-12`, NaN == NaN. On mismatch, raise `HistoryRevisedError`. `run_update` catches it, prints "history revised in data.xlsx (first mismatch <date> <segment>) -> full rerun", and reruns FULL.
+   - Last copied date = the MAX, over enabled overlays (HMM/JM) and segments with a prior, of `clean.index[r_open - 1]` (`copied_through`, §7). Rows from each open block onward are recomputed, so later dates may differ: a restated last checkpoint row (provisional close) still resumes. MAX, not MIN, because one comparison date covers every segment and must reach the longest copied range. Nothing copied (no overlay enabled or reusable) → no comparison: RESUME is then a full recompute.
 7. Write via the existing `write_run(out_dir=historic_dir, run_date=f"results_{data_last}", force=True)`. It already builds `<name>.tmp`, removes stale tmp dirs, and renames atomically. `force=True` is safe: in RESUME a same-named folder can only exist without `snapshot.json` (not a valid checkpoint); in FULL with `type_run='all'` overwriting is the request.
 8. `snapshot.json` gets a new `update` block: `{mode, reason, checkpoint, dates_added, first_new_date}`.
 9. If `build_report`: `build_report(run_dir, data_path, run_dir / "report.html")`.
@@ -103,7 +104,7 @@ Inputs: current cleaned beta `clean` (length `n`), prior rows for this segment (
 3. Rows `[0, r_open)` are copied from the prior. Refit dates `< date(r_open)` are copied from the prior log.
 4. Run today's loop starting at `r = r_open`. The fit at `r_open` uses `clean[:r_open]` → same params as the original run.
 5. **Fallback:** today's code uses `last_good` when a fit fails to converge. In resume, `last_good` is initialised lazily. Only if the fit at `r_open` does not converge do we re-fit at the latest converged refit date `< date(r_open)` from the prior log (none → `None`, same as the original run).
-6. **Contract:** `walk_forward(beta, prior=P) == walk_forward(beta)` exactly (all output series and `refit_dates`), whenever `beta` on dates ≤ checkpoint equals the prior's beta.
+6. **Contract:** `walk_forward(beta, prior=P) == walk_forward(beta)` exactly (all output series and `refit_dates`), whenever `beta` on dates ≤ `clean.index[r_open - 1]` equals the prior's beta (the copied rows and every reused fit, including the fallback, use only those dates).
 
 Typical weekly run: ~5 new days → 1 fit per segment per overlay (~20 fits vs ~1,400).
 
