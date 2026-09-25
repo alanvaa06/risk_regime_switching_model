@@ -256,6 +256,17 @@ def test_unreadable_checkpoint_falls_back_to_full(rw_xlsx: Path, tmp_path: Path)
     assert update["checkpoint_rejected"] == "results_2023-06-15"
 
 
+def test_real_report_builds_in_historic_folder(rw_xlsx: Path, tmp_path: Path) -> None:
+    # No stubs: the report must parse the snapshot a historic run writes.
+    cfg = _config(tmp_path, rw_xlsx, jm=False)
+    out = _update(cfg, tmp_path / "a", TypeRun.ALL, until=T0, report=True)
+    assert out.run_dir is not None and out.run_dir.name == "results_2023-06-15"
+    assert (out.run_dir / "report.html").stat().st_size > 0
+    snap = _snapshot(out.run_dir)
+    pd.Timestamp(snap["run_date"])  # a real date, not the folder name
+    assert snap["as_of_data_date"] == "2023-06-15"
+
+
 @pytest.mark.slow
 def test_hmm_resume_equals_full_rerun(rw_xlsx: Path, tmp_path: Path) -> None:
     cfg = _config(tmp_path, rw_xlsx, hmm=True, jm=False)

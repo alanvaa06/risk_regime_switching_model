@@ -55,6 +55,7 @@ def run(
     force: bool = False,
     data_until: str | None = None,
     resume: ResumeState | None = None,
+    run_name: str | None = None,
 ) -> RunResult:
     """Execute the full RoRo pipeline and persist outputs under ``cfg.output_dir``.
 
@@ -63,6 +64,7 @@ def run(
     correlation panel -> external + internal validation -> tripwire ->
     alerts -> write run.
 
+    run_name: output folder name under ``cfg.output_dir`` (default: ``run_date``).
     data_until: drop prices after this date (YYYY-MM-DD) before any computation.
     resume: checkpoint state. HMM/JM copy their closed refit blocks from it, so
     betas must equal the checkpoint's through the last copied date (else
@@ -247,6 +249,7 @@ def run(
         out_dir=cfg.output_dir,
         as_of_data_date=as_of_data_date,
         force=force,
+        run_name=run_name,
     )
     return result
 

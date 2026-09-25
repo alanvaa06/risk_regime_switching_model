@@ -199,9 +199,12 @@ def write_run(
     out_dir: Path,
     as_of_data_date: str,
     force: bool = False,
+    run_name: str | None = None,
 ) -> Path:
-    final = out_dir / run_date
-    tmp = out_dir / f"{run_date}.tmp"
+    """Write the run to ``out_dir/<run_name or run_date>`` (tmp dir + atomic swap)."""
+    name = run_name if run_name is not None else run_date
+    final = out_dir / name
+    tmp = out_dir / f"{name}.tmp"
     if final.exists() and not force:
         raise FileExistsError(f"Run dir exists: {final}. Use force=True to overwrite.")
     if tmp.exists():
@@ -237,7 +240,7 @@ def write_run(
     # Rename-aside, never delete-in-place: a file locked by Excel makes the first rename
     # fail cleanly (PermissionError) before anything is removed, instead of leaving a
     # half-deleted folder that still looks like a valid checkpoint.
-    old = out_dir / f"{run_date}.old"
+    old = out_dir / f"{name}.old"
     if old.exists():
         shutil.rmtree(old)
     final.rename(old)
