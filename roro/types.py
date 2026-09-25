@@ -102,6 +102,20 @@ class JmRegimeFrame:
 
 
 @dataclass(frozen=True)
+class SegmentPrior:
+    """One segment's HMM or JM output read back from a checkpoint run folder.
+
+    ``probs`` columns are ordered (p_risk_off, p_transitional, p_risk_on) and indexed
+    by date; ``refit_dates`` are the converged refit dates from the refit log.
+    """
+
+    probs: pd.DataFrame
+    cold_start: pd.Series
+    refit_dates: tuple[pd.Timestamp, ...]
+    last_date: pd.Timestamp
+
+
+@dataclass(frozen=True)
 class CorrelationFrame:
     avg_pairwise_3m: pd.DataFrame
     pc1_variance_share: pd.DataFrame
