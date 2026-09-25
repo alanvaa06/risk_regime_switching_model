@@ -224,7 +224,7 @@ def run_update(
 
     target = historic_dir / f"results_{data_last:%Y-%m-%d}"
     if type_run is not TypeRun.ALL and (target / "snapshot.json").exists():
-        echo(f"[warn] overwriting {target.name} (config changed since it was written)")
+        echo(f"[warn] overwriting existing {target.name}")
 
     resume: ResumeState | None = None
     rejected: str | None = None

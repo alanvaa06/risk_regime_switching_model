@@ -133,7 +133,7 @@ def test_config_change_warns_before_overwriting_same_date(rw_xlsx: Path,
     out = _update(_config(tmp_path, rw_xlsx, jm=False, penalty=30.0), root,
                   TypeRun.NEW_DATA, log=log)
     assert out.mode is UpdateMode.FULL
-    assert "[warn] overwriting results_2024-12-31 (config changed since it was written)" in log
+    assert "[warn] overwriting existing results_2024-12-31" in log
 
 
 def test_restated_last_row_still_resumes(rw_xlsx: Path, tmp_path: Path) -> None:
