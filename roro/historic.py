@@ -15,7 +15,7 @@ import time
 import urllib.error
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -326,8 +326,9 @@ def _run_engine(
     engine_run(
         cfg,
         fred_client=fred_client,
-        run_date=f"results_{stamp}",
+        run_date=f"{date.today():%Y-%m-%d}",  # when it ran; the folder is named by data date
         as_of_data_date=stamp,
+        run_name=f"results_{stamp}",
         force=True,  # a same-named folder without snapshot.json is not a valid checkpoint
         data_until=stamp,
         resume=resume,
