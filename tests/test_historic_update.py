@@ -112,7 +112,7 @@ def test_up_to_date_writes_nothing(rw_xlsx: Path, tmp_path: Path) -> None:
     before = sorted(p.name for p in (tmp_path / "a" / "cfg").iterdir())
     again = _update(cfg, tmp_path / "a", TypeRun.NEW_DATA)
     assert again.mode is UpdateMode.UP_TO_DATE
-    assert again.run_dir is None
+    assert again.run_dir == tmp_path / "a" / "cfg" / "results_2024-12-31"
     assert sorted(p.name for p in (tmp_path / "a" / "cfg").iterdir()) == before
 
 
@@ -121,6 +121,46 @@ def test_config_change_forces_full(rw_xlsx: Path, tmp_path: Path) -> None:
     out = _update(_config(tmp_path, rw_xlsx, penalty=30.0), tmp_path / "a", TypeRun.NEW_DATA)
     assert out.mode is UpdateMode.FULL
     assert "jm_jump_penalty" in out.reason
+
+
+def test_config_change_warns_before_overwriting_same_date(rw_xlsx: Path,
+                                                         tmp_path: Path) -> None:
+    root = tmp_path / "h"
+    log: list[str] = []
+    _update(_config(tmp_path, rw_xlsx, jm=False), root, TypeRun.ALL, log=log)
+    assert not any(m.startswith("[warn]") for m in log)  # --full never warns
+    log.clear()
+    out = _update(_config(tmp_path, rw_xlsx, jm=False, penalty=30.0), root,
+                  TypeRun.NEW_DATA, log=log)
+    assert out.mode is UpdateMode.FULL
+    assert "[warn] overwriting results_2024-12-31 (config changed since it was written)" in log
+
+
+def test_restated_last_row_still_resumes(rw_xlsx: Path, tmp_path: Path) -> None:
+    cfg = _config(tmp_path, rw_xlsx)
+    _update(cfg, tmp_path / "a", TypeRun.ALL, until=T0)
+    eq, fi = random_walk_prices(RW_DATES, RW_SEED)
+    eq.loc[[T0], "Brazil"] *= 1.01  # the checkpoint's last close was provisional
+    build_xlsx(rw_xlsx, eq, fi)
+    resumed = _update(cfg, tmp_path / "a", TypeRun.NEW_DATA)
+    full = _update(cfg, tmp_path / "b", TypeRun.ALL)
+    assert resumed.mode is UpdateMode.RESUME, resumed.reason
+    assert resumed.run_dir is not None and full.run_dir is not None
+    _assert_same_csvs(resumed.run_dir, full.run_dir)
+
+
+def test_revised_history_without_overlays_resumes_exactly(rw_xlsx: Path,
+                                                          tmp_path: Path) -> None:
+    cfg = _config(tmp_path, rw_xlsx, jm=False)  # no HMM/JM: nothing is copied
+    _update(cfg, tmp_path / "a", TypeRun.ALL, until=T0)
+    eq, fi = random_walk_prices(RW_DATES, RW_SEED)
+    eq.iloc[300:301, 1] *= 1.05  # old revision: harmless when nothing is reused
+    build_xlsx(rw_xlsx, eq, fi)
+    resumed = _update(cfg, tmp_path / "a", TypeRun.NEW_DATA)
+    full = _update(cfg, tmp_path / "b", TypeRun.ALL)
+    assert resumed.mode is UpdateMode.RESUME, resumed.reason
+    assert resumed.run_dir is not None and full.run_dir is not None
+    _assert_same_csvs(resumed.run_dir, full.run_dir)
 
 
 def test_revised_history_falls_back_to_full(rw_xlsx: Path, tmp_path: Path) -> None:
@@ -195,7 +235,7 @@ def test_resume_warns_when_code_changed(
     out = _update(cfg, tmp_path / "h", TypeRun.NEW_DATA, log=log)
     assert out.mode is UpdateMode.RESUME
     assert ("[warn] code changed since results_2023-06-15 (aaaaaaa -> bbbbbbb); "
-            "if regime math changed, rerun with type_run='all'") in log
+            "if regime math changed, rerun with type_run='all' (or --full)") in log
     assert "new dates" in log[-1]
 
 

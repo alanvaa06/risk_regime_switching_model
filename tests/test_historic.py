@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import urllib.error
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ import pytest
 
 from roro.historic import (
     Checkpoint,
+    NoDataError,
     TypeRun,
     UpdateMode,
     UpdatePlan,
@@ -76,6 +78,22 @@ def test_find_checkpoint_skips_calendar_invalid_date(tmp_path: Path) -> None:
     assert cp.run_dir == valid
 
 
+@pytest.mark.parametrize("garbage", ["{not json", "[1, 2]", ""])
+def test_find_checkpoint_skips_corrupt_snapshot(tmp_path: Path, garbage: str) -> None:
+    older = _mk(tmp_path, "results_2026-09-18")
+    newest = _mk(tmp_path, "results_2026-09-25")
+    (newest / "snapshot.json").write_text(garbage, encoding="utf-8")
+    cp = find_checkpoint(tmp_path)
+    assert cp is not None
+    assert cp.run_dir == older
+
+
+def test_find_checkpoint_all_corrupt_is_none(tmp_path: Path) -> None:
+    only = _mk(tmp_path, "results_2026-09-18")
+    (only / "snapshot.json").write_text("{not json", encoding="utf-8")
+    assert find_checkpoint(tmp_path) is None
+
+
 def test_config_changes_ignores_paths_and_key() -> None:
     old = {"a": 1, "output_dir": "x", "data_path": "d1", "fred_api_key": None, "b": 2}
     new = {"a": 1, "output_dir": "y", "data_path": "d2", "fred_api_key": "k", "b": 3, "c": 0}
@@ -129,7 +147,7 @@ def test_plan_up_to_date() -> None:
 def test_plan_up_to_date_hints_when_data_until_is_earlier() -> None:
     plan = _plan(data_last=pd.Timestamp("2026-09-10"), data_until=pd.Timestamp("2026-09-10"))
     assert plan.mode is UpdateMode.UP_TO_DATE
-    assert "type_run='all'" in plan.reason
+    assert "type_run='all' (or --full)" in plan.reason
 
 
 def test_plan_resume() -> None:
@@ -165,3 +183,24 @@ def test_friendly_error_no_filename_omits_none() -> None:
     msg = friendly_error(PermissionError("denied"))
     assert msg is not None
     assert "None" not in msg
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        urllib.error.URLError("proxy refused"),
+        ConnectionError("reset by peer"),
+        ConnectionRefusedError(10061, "refused"),
+        TimeoutError("timed out"),
+    ],
+)
+def test_friendly_error_network(exc: BaseException) -> None:
+    msg = friendly_error(exc)
+    assert msg is not None
+    assert msg.startswith("Cannot reach FRED")
+
+
+def test_friendly_error_no_data() -> None:
+    exc = NoDataError("no data in data.xlsx on or before 2001-01-01")
+    assert isinstance(exc, ValueError)  # callers catching ValueError still work
+    assert friendly_error(exc) == "no data in data.xlsx on or before 2001-01-01"

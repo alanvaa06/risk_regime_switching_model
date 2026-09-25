@@ -411,16 +411,21 @@ Each produces `outputs/<run-date>/` (see §11). The run emits `regimes.csv` alwa
 # Process only dates not yet in outputs/historic/jm-eval/
 roro update --config configs/jm-eval.yaml
 
-# Rebuild the full history (e.g. after changing a parameter)
+# Rebuild the full history from scratch
 roro update --config configs/jm-eval.yaml --full
 
 # Process data only up to a date; skip the HTML report
 roro update --config configs/jm-eval.yaml --data-until 25-09-2026 --no-report
+
+# Keep the results somewhere other than outputs/historic/
+roro update --config configs/jm-eval.yaml --historic-root D:/roro-history
 ```
 
-Layout: `outputs/historic/<config-name>/results_<last-data-date>/` holds the **complete** history (all CSVs + `snapshot.json` + `report.html`). Older folders are kept; delete or archive them by hand.
+To experiment with parameters, copy the config to a new file name (e.g. `configs/jm-eval-test.yaml`) so its results get their own folder instead of overwriting.
 
-How it decides: `--full` → full run; no previous folder → full run; config changed since the last folder → full run; no new dates → nothing written; otherwise **resume**. Resume recomputes the fast stages on the full data (about 1 minute) and re-fits only the last open HMM/JM refit block instead of the whole 2008→today walk-forward — the result is byte-identical to a full rerun. If old prices in `data.xlsx` were revised, the run detects it and falls back to a full run automatically. `snapshot.json["update"]` records which path ran and why.
+Layout: `outputs/historic/<config-name>/results_<last-data-date>/` holds the **complete** history (all CSVs + `snapshot.json` + `report.html`). Older folders are kept; each results folder is ~50 MB of CSV plus ~55 MB report.html; archive old ones by hand.
+
+How it decides: `--full` → full run; no previous folder → full run; config changed since the last folder → full run; no new dates → nothing recomputed (a missing report.html is rebuilt); otherwise **resume**. Resume recomputes the fast stages on the full data (about 1 minute) and re-fits only the last open HMM/JM refit block instead of the whole 2008→today walk-forward — the result is byte-identical to a full rerun. If old prices in `data.xlsx` were revised where the resume reuses results, the run detects it and falls back to a full run automatically; a restated last row (provisional close) normally does not force one (only when that row closed a refit block). `snapshot.json["update"]` records which path ran and why.
 
 **One click (for colleagues):** edit the four parameters at the top of `run_roro.py` (`CONFIG`, `TYPE_RUN = "new_data" | "all"`, `DATA_UNTIL`, `BUILD_REPORT`), then double-click `run_roro.bat`. It needs the project `.venv` (`uv sync`) and `FRED_API_KEY` in `.env`. Run commands from the RoRo folder (paths in the configs are relative to it).
 

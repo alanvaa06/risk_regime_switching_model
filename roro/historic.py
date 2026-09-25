@@ -12,6 +12,7 @@ import json
 import os
 import re
 import time
+import urllib.error
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
@@ -36,6 +37,10 @@ _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _DMY_DATE = re.compile(r"^\d{2}-\d{2}-\d{4}$")
 #: Config keys that do not change results (paths, secrets): never force a FULL run.
 _CONFIG_KEYS_IGNORED: frozenset[str] = frozenset({"output_dir", "data_path", "fred_api_key"})
+
+
+class NoDataError(ValueError):
+    """The data file has no rows (on or before the requested date)."""
 
 
 class TypeRun(StrEnum):
@@ -95,8 +100,9 @@ def available_configs(configs_dir: Path) -> dict[str, Path]:
 def find_checkpoint(historic_dir: Path) -> Checkpoint | None:
     """Newest complete ``results_YYYY-MM-DD`` folder, by the date in its name.
 
-    Skips ``.tmp`` folders (interrupted writes), folders without snapshot.json, and
-    folders whose date is calendar-invalid (e.g. ``results_2026-13-45``).
+    Skips ``.tmp`` folders (interrupted writes), folders without a readable
+    snapshot.json (a JSON object), and folders whose date is calendar-invalid
+    (e.g. ``results_2026-13-45``); the next-newest valid folder is used instead.
     """
     if not historic_dir.is_dir():
         return None
@@ -109,11 +115,14 @@ def find_checkpoint(historic_dir: Path) -> Checkpoint | None:
             except ValueError:
                 continue
             found.append((ts, p))
-    if not found:
-        return None
-    last_date, run_dir = max(found)
-    snapshot = json.loads((run_dir / "snapshot.json").read_text(encoding="utf-8"))
-    return Checkpoint(run_dir=run_dir, last_date=last_date, snapshot=snapshot)
+    for last_date, run_dir in sorted(found, reverse=True):
+        try:
+            snapshot = json.loads((run_dir / "snapshot.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(snapshot, dict):
+            return Checkpoint(run_dir=run_dir, last_date=last_date, snapshot=snapshot)
+    return None
 
 
 def config_changes(old: Mapping[str, Any], new: Mapping[str, Any]) -> list[str]:
@@ -148,13 +157,18 @@ def plan_update(
     if checkpoint.last_date >= data_last:
         reason = f"already processed through {checkpoint.last_date.date()}"
         if data_until is not None and data_until < checkpoint.last_date:
-            reason += "; use type_run='all' to rebuild as of an earlier date"
+            reason += "; use type_run='all' (or --full) to rebuild as of an earlier date"
         return UpdatePlan(UpdateMode.UP_TO_DATE, reason)
     return UpdatePlan(UpdateMode.RESUME, f"resuming from {checkpoint.run_dir.name}")
 
 
 def friendly_error(exc: BaseException) -> str | None:
     """Plain-English message for errors a non-developer can fix; None otherwise."""
+    if isinstance(exc, NoDataError):
+        return str(exc)
+    # URLError is an OSError but neither a PermissionError nor a FileNotFoundError.
+    if isinstance(exc, (urllib.error.URLError, ConnectionError, TimeoutError)):
+        return "Cannot reach FRED (network or proxy problem); check the connection and retry"
     if isinstance(exc, PermissionError):
         name = exc.filename or "the file"
         return f"Cannot open {name}: close it in Excel (or any other program) and retry"
@@ -176,8 +190,10 @@ def run_update(
 ) -> UpdateOutcome:
     """Run one config into <historic_root>/<config-stem>/results_<last-data-date>/.
 
-    RESUME reuses the newest checkpoint; a revised history falls back to FULL.
-    UP_TO_DATE writes nothing, except a missing report.html for the checkpoint.
+    RESUME reuses the newest checkpoint; history revised where the checkpoint's
+    HMM/JM rows are reused falls back to FULL.
+    UP_TO_DATE writes nothing, except a missing report.html for the checkpoint,
+    and returns the checkpoint folder as run_dir.
     All console output is ASCII.
     """
     started = time.perf_counter()
@@ -199,13 +215,16 @@ def run_update(
         reason += f" in {historic_dir.resolve()}"
     echo(f"[{mode.value.upper()}] {name}: {reason}")
     if mode is UpdateMode.UP_TO_DATE:
-        report_dir: Path | None = None
         # plan_update only returns UP_TO_DATE with a checkpoint; re-check for mypy.
+        current = checkpoint.run_dir if checkpoint is not None else None
         if build_report and checkpoint and not (checkpoint.run_dir / "report.html").exists():
             echo("report.html missing -> building it")
             _write_report(checkpoint.run_dir, cfg.data_path, checkpoint.last_date, echo)
-            report_dir = checkpoint.run_dir
-        return UpdateOutcome(mode, reason, report_dir, 0, time.perf_counter() - started)
+        return UpdateOutcome(mode, reason, current, 0, time.perf_counter() - started)
+
+    target = historic_dir / f"results_{data_last:%Y-%m-%d}"
+    if type_run is not TypeRun.ALL and (target / "snapshot.json").exists():
+        echo(f"[warn] overwriting {target.name} (config changed since it was written)")
 
     resume: ResumeState | None = None
     rejected: str | None = None
@@ -258,7 +277,7 @@ def _warn_code_changed(checkpoint: Checkpoint, echo: Callable[[str], None]) -> N
         return
     echo(
         f"[warn] code changed since {checkpoint.run_dir.name} ({old[:7]} -> {new[:7]}); "
-        "if regime math changed, rerun with type_run='all'"
+        "if regime math changed, rerun with type_run='all' (or --full)"
     )
 
 
@@ -286,7 +305,7 @@ def _data_dates(data_path: Path, data_until: pd.Timestamp | None) -> pd.Datetime
     dates = pd.DatetimeIndex(prices.equity_lc.index)
     if dates.empty:
         cut = f" on or before {data_until.date()}" if data_until is not None else ""
-        raise ValueError(f"no data in {data_path}{cut}")
+        raise NoDataError(f"no data in {data_path}{cut}")
     return dates
 
 

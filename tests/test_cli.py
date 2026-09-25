@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import urllib.error
 from pathlib import Path
 
 import pandas as pd
 import pytest
 from click.testing import CliRunner
 
+import roro.historic as historic_mod
 from roro import cli as cli_mod
 from roro.cli import main
 from roro.fred_client import FRED_SERIES_IDS, MockFredClient
@@ -143,3 +145,46 @@ def test_cli_update_full_then_up_to_date(
     bad = runner.invoke(main, [*base, "--data-until", "2023/06/15"])
     assert bad.exit_code != 0
     assert "DD-MM-YYYY" in bad.output
+
+
+@pytest.mark.parametrize(
+    ("exc", "expected"),
+    [
+        ("no_data", "no data in data.xlsx"),
+        ("network", "Cannot reach FRED"),
+    ],
+)
+def test_cli_update_friendly_errors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exc: str, expected: str
+) -> None:
+    errors: dict[str, Exception] = {
+        "no_data": historic_mod.NoDataError("no data in data.xlsx"),
+        "network": urllib.error.URLError("proxy"),
+    }
+
+    def failing(*_a: object, **_k: object) -> None:
+        raise errors[exc]
+
+    monkeypatch.setattr(historic_mod, "run_update", failing)
+    monkeypatch.setattr(cli_mod, "_build_fred_client", lambda key: object())
+    cfg_yaml = tmp_path / "c.yaml"
+    cfg_yaml.write_text("data_path: x.xlsx\n", encoding="utf-8")
+    result = CliRunner().invoke(main, ["update", "--config", str(cfg_yaml)])
+    assert result.exit_code == 1
+    assert f"Error: {expected}" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_cli_update_unknown_error_propagates(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failing(*_a: object, **_k: object) -> None:
+        raise RuntimeError("engine bug")
+
+    monkeypatch.setattr(historic_mod, "run_update", failing)
+    monkeypatch.setattr(cli_mod, "_build_fred_client", lambda key: object())
+    cfg_yaml = tmp_path / "c.yaml"
+    cfg_yaml.write_text("data_path: x.xlsx\n", encoding="utf-8")
+    result = CliRunner().invoke(main, ["update", "--config", str(cfg_yaml)])
+    assert result.exit_code == 1
+    assert isinstance(result.exception, RuntimeError)

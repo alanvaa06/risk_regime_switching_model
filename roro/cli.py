@@ -250,7 +250,7 @@ def cmd_update(
             historic_root=historic_root,
             echo=click.echo,
         )
-    except OSError as exc:
+    except Exception as exc:
         message = friendly_error(exc)
         if message is None:
             raise
