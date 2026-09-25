@@ -61,7 +61,7 @@ Follow-ups (not started):
 - [ ] Document `fragile_flag`/`pct_ex_top1` as cap-only in the artifact schema docs (`roro/attribution.py:446` — every `eq` row reads `fragile_flag=False`, `pct_ex_top1=NaN` by construction, silently under-reporting sign flips like the 2026-05-26 global eq row)
 - [ ] Squash decision for commit `9f7290e` (broken intermediate state: engine called `detect_alerts(attribution=...)` before alerts.py accepted the kwarg, fixed in `a36f4cf`) — squash-merge recommended when merging `feat/attribution`, or accept as-is if history is kept linear
 
-## Incremental Historic Runs (2026-09-25) — IN PROGRESS (feat/incremental-historic)
+## Incremental Historic Runs (2026-09-25) — DONE (feat/incremental-historic)
 Spec: `docs/superpowers/specs/2026-09-25-incremental-historic-runs-design.md` · Plan: `docs/superpowers/plans/2026-09-25-incremental-historic-runs.md`
 - [x] I1 — resume primitives (`roro/resume.py`) + `SegmentPrior`
 - [x] I2 — HMM `walk_forward(prior=)` resume, exact vs full
@@ -74,4 +74,5 @@ Spec: `docs/superpowers/specs/2026-09-25-incremental-historic-runs-design.md` ·
 - [x] I9 — CLI `roro update`
 - [x] I10 — `run_roro.py` + `run_roro.bat` one-click runner
 - [x] I11 — README + context docs
-- [ ] I12 — full suite + real-data bench (jm-eval FULL vs RESUME timing + byte compare)
+- [x] I12 — full suite + real-data bench (jm-eval FULL vs RESUME timing + byte compare)
+- [ ] Follow-up (optional): data.xlsx is parsed ~8x per update (historic dates + engine + report); read only the date column in `_data_dates` if refresh time matters.
