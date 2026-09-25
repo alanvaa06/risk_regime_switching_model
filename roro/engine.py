@@ -11,8 +11,10 @@ from roro.config import EngineConfig
 from roro.correlation import compute_correlation_panel
 from roro.fred_client import FredClient
 from roro.io import (
+    beta_long,
     code_version,
     compute_data_fingerprint,
+    cut_prices,
     load_fred,
     load_panel,
     load_prices,
@@ -21,6 +23,7 @@ from roro.io import (
 from roro.regime_hmm import classify_hmm
 from roro.regime_jm import classify_jm
 from roro.regression import compute_beta_by_segment
+from roro.resume import verify_beta_history
 from roro.returns import daily_log_returns, ewma_vol, total_return_3m
 from roro.segments import partition
 from roro.tripwire import compute_tripwire_signal
@@ -28,6 +31,7 @@ from roro.types import (
     HmmRegimeFrame,
     JmRegimeFrame,
     RegimeFrame,
+    ResumeState,
     ReturnsFrame,
     RunResult,
     ValidationFrame,
@@ -48,6 +52,8 @@ def run(
     run_date: str,
     as_of_data_date: str,
     force: bool = False,
+    data_until: str | None = None,
+    resume: ResumeState | None = None,
 ) -> RunResult:
     """Execute the full RoRo pipeline and persist outputs under ``cfg.output_dir``.
 
@@ -55,6 +61,10 @@ def run(
     segment partition -> cross-sectional regression -> classification ->
     correlation panel -> external + internal validation -> tripwire ->
     alerts -> write run.
+
+    data_until: drop prices after this date (YYYY-MM-DD) before any computation.
+    resume: checkpoint state. Betas up to its date must equal the checkpoint's
+    (else HistoryRevisedError, nothing written); HMM/JM then resume from it.
     """
     warnings: list[str] = []
 
@@ -62,6 +72,8 @@ def run(
     universe = load_panel(cfg.data_path)
     warnings.extend(validate_universe(universe))
     prices = load_prices(cfg.data_path)
+    if data_until is not None:
+        prices = cut_prices(prices, pd.Timestamp(data_until))
     warnings.extend(validate_prices(prices))
 
     # 2) External (FRED) pull aligned to the equity price window.
@@ -92,6 +104,10 @@ def run(
         min_n=cfg.min_n_per_cut,
     )
 
+    # 4b) Resume guard: the checkpoint is only valid if history is unchanged.
+    if resume is not None:
+        verify_beta_history(beta_long(beta), resume.beta_series, through=resume.checkpoint_date)
+
     # 5) Classify percentile/tercile/quintile/direction per segment.
     regime = classify(
         beta,
@@ -104,14 +120,20 @@ def run(
 
     # 5b) Optional HMM regime classifier (parallel method, off by default).
     regime_hmm = (
-        classify_hmm(beta, cfg=cfg, thin_cuts=frozenset({"LatAm"}))
+        classify_hmm(
+            beta, cfg=cfg, thin_cuts=frozenset({"LatAm"}),
+            prior=resume.hmm if resume is not None else None,
+        )
         if cfg.hmm_enabled
         else None
     )
 
     # 5c) Optional JM regime classifier (parallel method, off by default).
     regime_jm = (
-        classify_jm(beta, cfg=cfg, thin_cuts=frozenset({"LatAm"}))
+        classify_jm(
+            beta, cfg=cfg, thin_cuts=frozenset({"LatAm"}),
+            prior=resume.jm if resume is not None else None,
+        )
         if cfg.jm_enabled
         else None
     )
