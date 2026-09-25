@@ -4,19 +4,20 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
+
+COUNTRIES: list[str] = ["United States", "Brazil", "Germany", "Mexico"]
+_EQ_TICKERS: list[str] = ["SPX Index", "MXBR Index", "MXDE Index", "MXMX Index"]
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     parser.addoption("--regenerate-goldens", action="store_true", default=False)
 
 
-@pytest.fixture
-def tiny_xlsx(tmp_path: Path) -> Path:
-    """Build a 4-country + 2-composite tiny xlsx that mirrors data.xlsx layout."""
-    path = tmp_path / "tiny.xlsx"
-    panel = pd.DataFrame(
+def _panel() -> pd.DataFrame:
+    return pd.DataFrame(
         {
             "Country": ["United States", "Brazil", "Germany", "Mexico", "DM", "LatAm"],
             "Segment": ["DM", "EM", "DM", "EM", "DM", "EM"],
@@ -35,23 +36,50 @@ def tiny_xlsx(tmp_path: Path) -> Path:
             "Fixed_Income_Mkt_Cap_Val": [50, 5, 10, 3, 65, 8],
         }
     )
-    dates = pd.bdate_range("2020-01-01", "2024-12-31")
-    eq_tickers = ["SPX Index", "MXBR Index", "MXDE Index", "MXMX Index"]
-    eq_countries = ["United States", "Brazil", "Germany", "Mexico"]
-    eq_data = pd.DataFrame(
-        {c: range(100, 100 + len(dates)) for c in eq_countries},
-        index=dates,
-    )
-    fi_data = pd.DataFrame(
-        {c: range(200, 200 + len(dates)) for c in eq_countries},
-        index=dates,
-    )
 
+
+def build_xlsx(path: Path, eq_data: pd.DataFrame, fi_data: pd.DataFrame) -> Path:
+    """Write a data.xlsx-shaped workbook (Panel + Equity_LC + Fixed_Income_LC)."""
     with pd.ExcelWriter(path, engine="openpyxl") as w:
-        panel.to_excel(w, sheet_name="Panel", index=False)
-        _write_two_header_sheet(w, "Equity_LC", eq_tickers, eq_countries, eq_data)
-        _write_two_header_sheet(w, "Fixed_Income_LC", eq_tickers, eq_countries, fi_data)
+        _panel().to_excel(w, sheet_name="Panel", index=False)
+        _write_two_header_sheet(w, "Equity_LC", _EQ_TICKERS, COUNTRIES, eq_data)
+        _write_two_header_sheet(w, "Fixed_Income_LC", _EQ_TICKERS, COUNTRIES, fi_data)
     return path
+
+
+def random_walk_prices(
+    dates: pd.DatetimeIndex, seed: int
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Seeded geometric random walks with distinct per-country vols (noisy betas)."""
+    rng = np.random.default_rng(seed)
+    n, k = len(dates), len(COUNTRIES)
+    eq_vol = np.array([0.008, 0.018, 0.011, 0.015])
+    fi_vol = np.array([0.002, 0.005, 0.003, 0.004])
+    eq_ret = rng.normal(0.0003, 1.0, (n, k)) * eq_vol
+    fi_ret = rng.normal(0.0001, 1.0, (n, k)) * fi_vol
+    eq = pd.DataFrame(100.0 * np.exp(np.cumsum(eq_ret, axis=0)), index=dates, columns=COUNTRIES)
+    fi = pd.DataFrame(200.0 * np.exp(np.cumsum(fi_ret, axis=0)), index=dates, columns=COUNTRIES)
+    return eq, fi
+
+
+RW_DATES: pd.DatetimeIndex = pd.bdate_range("2020-01-01", "2024-12-31")
+RW_SEED: int = 7
+
+
+@pytest.fixture
+def tiny_xlsx(tmp_path: Path) -> Path:
+    """Build a 4-country + 2-composite tiny xlsx that mirrors data.xlsx layout."""
+    dates = pd.bdate_range("2020-01-01", "2024-12-31")
+    eq_data = pd.DataFrame({c: range(100, 100 + len(dates)) for c in COUNTRIES}, index=dates)
+    fi_data = pd.DataFrame({c: range(200, 200 + len(dates)) for c in COUNTRIES}, index=dates)
+    return build_xlsx(tmp_path / "tiny.xlsx", eq_data, fi_data)
+
+
+@pytest.fixture
+def rw_xlsx(tmp_path: Path) -> Path:
+    """Same layout as tiny_xlsx, seeded random-walk prices (noisy, realistic betas)."""
+    eq, fi = random_walk_prices(RW_DATES, RW_SEED)
+    return build_xlsx(tmp_path / "rw.xlsx", eq, fi)
 
 
 def _write_two_header_sheet(
