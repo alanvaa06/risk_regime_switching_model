@@ -61,17 +61,17 @@ Follow-ups (not started):
 - [ ] Document `fragile_flag`/`pct_ex_top1` as cap-only in the artifact schema docs (`roro/attribution.py:446` — every `eq` row reads `fragile_flag=False`, `pct_ex_top1=NaN` by construction, silently under-reporting sign flips like the 2026-05-26 global eq row)
 - [ ] Squash decision for commit `9f7290e` (broken intermediate state: engine called `detect_alerts(attribution=...)` before alerts.py accepted the kwarg, fixed in `a36f4cf`) — squash-merge recommended when merging `feat/attribution`, or accept as-is if history is kept linear
 
-## Incremental Historic Runs (2026-09-25) — PLANNED (feat/incremental-historic)
+## Incremental Historic Runs (2026-09-25) — IN PROGRESS (feat/incremental-historic)
 Spec: `docs/superpowers/specs/2026-09-25-incremental-historic-runs-design.md` · Plan: `docs/superpowers/plans/2026-09-25-incremental-historic-runs.md`
-- [ ] I1 — resume primitives (`roro/resume.py`) + `SegmentPrior`
-- [ ] I2 — HMM `walk_forward(prior=)` resume, exact vs full
-- [ ] I3 — JM `walk_forward(prior=)` resume (discrete/continuous/rolling), exact vs full
-- [ ] I4 — `rw_xlsx` random-walk fixture (`tiny_xlsx` byte-identical)
-- [ ] I5 — io: `beta_long`, `cut_prices`, `read_resume_state`; `verify_beta_history`
-- [ ] I6 — engine `data_until` + `resume` + history guard
-- [ ] I7 — `roro/historic.py` pure: dates, configs, `find_checkpoint`, `plan_update`, `friendly_error`
-- [ ] I8 — `run_update` orchestrator; RESUME == FULL byte-identical (AI-1)
-- [ ] I9 — CLI `roro update`
-- [ ] I10 — `run_roro.py` + `run_roro.bat` one-click runner
-- [ ] I11 — README + context docs
+- [x] I1 — resume primitives (`roro/resume.py`) + `SegmentPrior`
+- [x] I2 — HMM `walk_forward(prior=)` resume, exact vs full
+- [x] I3 — JM `walk_forward(prior=)` resume (discrete/continuous/rolling), exact vs full
+- [x] I4 — `rw_xlsx` random-walk fixture (`tiny_xlsx` byte-identical)
+- [x] I5 — io: `beta_long`, `cut_prices`, `read_resume_state`; `verify_beta_history`
+- [x] I6 — engine `data_until` + `resume` + history guard
+- [x] I7 — `roro/historic.py` pure: dates, configs, `find_checkpoint`, `plan_update`, `friendly_error`
+- [x] I8 — `run_update` orchestrator; RESUME == FULL byte-identical (AI-1)
+- [x] I9 — CLI `roro update`
+- [x] I10 — `run_roro.py` + `run_roro.bat` one-click runner
+- [x] I11 — README + context docs
 - [ ] I12 — full suite + real-data bench (jm-eval FULL vs RESUME timing + byte compare)
