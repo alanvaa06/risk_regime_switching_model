@@ -9,6 +9,7 @@ docs/superpowers/specs/2026-09-25-incremental-historic-runs-design.md
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from collections.abc import Callable, Mapping
@@ -24,7 +25,7 @@ from roro.config import EngineConfig, load_config
 from roro.config import to_dict as config_to_dict
 from roro.engine import run as engine_run
 from roro.fred_client import FredClient
-from roro.io import cut_prices, load_prices, read_resume_state
+from roro.io import code_version, cut_prices, load_prices, read_resume_state
 from roro.resume import HistoryRevisedError
 from roro.types import ResumeState
 
@@ -158,7 +159,8 @@ def friendly_error(exc: BaseException) -> str | None:
         name = exc.filename or "the file"
         return f"Cannot open {name}: close it in Excel (or any other program) and retry"
     if isinstance(exc, FileNotFoundError):
-        return f"File not found: {exc.filename or 'the file'}"
+        where = Path(str(exc.filename)).resolve() if exc.filename else "the file"
+        return f"File not found: {where} (run from the RoRo folder, or fix data_path in the config)"
     return None
 
 
@@ -175,7 +177,8 @@ def run_update(
     """Run one config into <historic_root>/<config-stem>/results_<last-data-date>/.
 
     RESUME reuses the newest checkpoint; a revised history falls back to FULL.
-    UP_TO_DATE writes nothing. All console output is ASCII.
+    UP_TO_DATE writes nothing, except a missing report.html for the checkpoint.
+    All console output is ASCII.
     """
     started = time.perf_counter()
     name = config_path.stem
@@ -191,22 +194,37 @@ def run_update(
         data_last=data_last,
         data_until=data_until,
     )
-    echo(f"[{plan.mode.value.upper()}] {name}: {plan.reason}")
-    if plan.mode is UpdateMode.UP_TO_DATE:
-        return UpdateOutcome(plan.mode, plan.reason, None, 0, time.perf_counter() - started)
-
     mode, reason = plan.mode, plan.reason
-    resume = (
-        read_resume_state(checkpoint.run_dir, checkpoint.last_date)
-        if plan.mode is UpdateMode.RESUME and checkpoint is not None
-        else None
-    )
+    if checkpoint is None and type_run is TypeRun.NEW_DATA:
+        reason += f" in {historic_dir.resolve()}"
+    echo(f"[{mode.value.upper()}] {name}: {reason}")
+    if mode is UpdateMode.UP_TO_DATE:
+        report_dir: Path | None = None
+        # plan_update only returns UP_TO_DATE with a checkpoint; re-check for mypy.
+        if build_report and checkpoint and not (checkpoint.run_dir / "report.html").exists():
+            echo("report.html missing -> building it")
+            _write_report(checkpoint.run_dir, cfg.data_path, checkpoint.last_date, echo)
+            report_dir = checkpoint.run_dir
+        return UpdateOutcome(mode, reason, report_dir, 0, time.perf_counter() - started)
+
+    resume: ResumeState | None = None
+    rejected: str | None = None
+    if mode is UpdateMode.RESUME and checkpoint is not None:
+        _warn_code_changed(checkpoint, echo)
+        try:
+            resume = read_resume_state(checkpoint.run_dir, checkpoint.last_date)
+        except (FileNotFoundError, ValueError, KeyError) as exc:  # pandas errors are ValueError
+            mode = UpdateMode.FULL
+            reason = f"checkpoint {checkpoint.run_dir.name} unreadable ({exc}) -> full rerun"
+            rejected = checkpoint.run_dir.name
+            echo(f"[{mode.value.upper()}] {name}: {reason}")
     try:
         run_dir = _run_engine(cfg, fred_client, data_last, resume)
     except HistoryRevisedError as exc:
         mode = UpdateMode.FULL
         reason = f"history revised in {cfg.data_path.name} ({exc}) -> full rerun"
         resume = None
+        rejected = checkpoint.run_dir.name if checkpoint is not None else None
         echo(f"[{mode.value.upper()}] {name}: {reason}")
         run_dir = _run_engine(cfg, fred_client, data_last, None)
 
@@ -218,19 +236,47 @@ def run_update(
             "mode": mode.value,
             "reason": reason,
             "checkpoint": checkpoint.run_dir.name if since is not None and checkpoint else None,
+            "checkpoint_rejected": rejected,
             "dates_added": len(new_dates),
             "first_new_date": f"{new_dates.min():%Y-%m-%d}" if len(new_dates) else None,
         },
     )
     if build_report:
-        # Lazy import: the report stack pulls plotly and is only needed here.
-        from roro.report import build_report as build_report_html  # noqa: PLC0415
-
         echo("building report.html ...")
-        build_report_html(run_dir, cfg.data_path, run_dir / "report.html")
+        _write_report(run_dir, cfg.data_path, data_last, echo)
     elapsed = time.perf_counter() - started
-    echo(f"[ok] {run_dir} ({len(new_dates)} new dates, {elapsed:.0f}s)")
+    what = "new dates" if mode is UpdateMode.RESUME else "dates processed"
+    echo(f"[ok] {run_dir.resolve()} ({len(new_dates)} {what}, {elapsed:.0f}s)")
     return UpdateOutcome(mode, reason, run_dir, len(new_dates), elapsed)
+
+
+def _warn_code_changed(checkpoint: Checkpoint, echo: Callable[[str], None]) -> None:
+    """Warn (no behaviour change) when the checkpoint was written by other code."""
+    old = str(checkpoint.snapshot.get("code_version", {}).get("git_sha", "unknown"))
+    new = code_version()["git_sha"]
+    if "unknown" in (old, new) or old == new:
+        return
+    echo(
+        f"[warn] code changed since {checkpoint.run_dir.name} ({old[:7]} -> {new[:7]}); "
+        "if regime math changed, rerun with type_run='all'"
+    )
+
+
+def _write_report(
+    run_dir: Path, data_path: Path, data_until: pd.Timestamp, echo: Callable[[str], None]
+) -> None:
+    """report.html as of ``data_until``; on failure say where the results are, then re-raise."""
+    # Lazy import: the report stack pulls plotly and is only needed here.
+    from roro.report import build_report  # noqa: PLC0415
+
+    try:
+        build_report(run_dir, data_path, run_dir / "report.html", data_until=data_until)
+    except Exception as exc:
+        echo(
+            f"[x] report failed: {exc}. Results are saved in {run_dir.resolve()}; "
+            "the next run will retry the report."
+        )
+        raise
 
 
 def _data_dates(data_path: Path, data_until: pd.Timestamp | None) -> pd.DatetimeIndex:
@@ -239,7 +285,8 @@ def _data_dates(data_path: Path, data_until: pd.Timestamp | None) -> pd.Datetime
         prices = cut_prices(prices, data_until)
     dates = pd.DatetimeIndex(prices.equity_lc.index)
     if dates.empty:
-        raise ValueError(f"no data in {data_path} on or before {data_until}")
+        cut = f" on or before {data_until.date()}" if data_until is not None else ""
+        raise ValueError(f"no data in {data_path}{cut}")
     return dates
 
 
@@ -274,4 +321,6 @@ def _stamp_update(run_dir: Path, info: dict[str, Any]) -> None:
     path = run_dir / "snapshot.json"
     snapshot = json.loads(path.read_text(encoding="utf-8"))
     snapshot["update"] = info
-    path.write_text(json.dumps(snapshot, indent=2, default=str), encoding="utf-8")
+    tmp = path.with_name("snapshot.json.tmp")
+    tmp.write_text(json.dumps(snapshot, indent=2, default=str), encoding="utf-8")
+    os.replace(tmp, path)

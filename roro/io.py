@@ -231,9 +231,22 @@ def write_run(
         json.dumps(snapshot, indent=2, default=str), encoding="utf-8"
     )
 
-    if final.exists():
-        shutil.rmtree(final)
-    tmp.rename(final)
+    if not final.exists():
+        tmp.rename(final)
+        return final
+    # Rename-aside, never delete-in-place: a file locked by Excel makes the first rename
+    # fail cleanly (PermissionError) before anything is removed, instead of leaving a
+    # half-deleted folder that still looks like a valid checkpoint.
+    old = out_dir / f"{run_date}.old"
+    if old.exists():
+        shutil.rmtree(old)
+    final.rename(old)
+    try:
+        tmp.rename(final)
+    except OSError:
+        old.rename(final)  # put the previous run back
+        raise
+    shutil.rmtree(old, ignore_errors=True)
     return final
 
 

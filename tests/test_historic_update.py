@@ -9,7 +9,9 @@ from typing import Any
 import pandas as pd
 import pytest
 
+import roro.historic as historic_mod
 import roro.regime_jm as jm_mod
+import roro.report as report_mod
 from roro import jump_model
 from roro.fred_client import FRED_SERIES_IDS, MockFredClient
 from roro.historic import TypeRun, UpdateMode, UpdateOutcome, run_update
@@ -50,9 +52,16 @@ def _config(tmp_path: Path, xlsx: Path, *, hmm: bool = False, jm: bool = True,
 
 
 def _update(cfg: Path, root: Path, type_run: TypeRun,
-            until: pd.Timestamp | None = None) -> UpdateOutcome:
-    return run_update(cfg, type_run=type_run, data_until=until, build_report=False,
-                      fred_client=_fred(), historic_root=root, echo=lambda _m: None)
+            until: pd.Timestamp | None = None, *, report: bool = False,
+            log: list[str] | None = None) -> UpdateOutcome:
+    echo = log.append if log is not None else (lambda _m: None)
+    return run_update(cfg, type_run=type_run, data_until=until, build_report=report,
+                      fred_client=_fred(), historic_root=root, echo=echo)
+
+
+def _snapshot(run_dir: Path) -> dict[str, Any]:
+    loaded: dict[str, Any] = json.loads((run_dir / "snapshot.json").read_text(encoding="utf-8"))
+    return loaded
 
 
 def _assert_same_csvs(a: Path, b: Path) -> None:
@@ -91,7 +100,7 @@ def test_resume_equals_full_rerun(rw_xlsx: Path, tmp_path: Path,
     assert resume_fits < full_fits  # the resume really skipped closed blocks
     assert resumed.dates_added == int((RW_DATES > T0).sum())
 
-    update = json.loads((resumed.run_dir / "snapshot.json").read_text(encoding="utf-8"))["update"]
+    update = _snapshot(resumed.run_dir)["update"]
     assert update["mode"] == "resume"
     assert update["checkpoint"] == "results_2023-06-15"
     assert update["dates_added"] == resumed.dates_added
@@ -124,8 +133,87 @@ def test_revised_history_falls_back_to_full(rw_xlsx: Path, tmp_path: Path) -> No
     assert out.mode is UpdateMode.FULL
     assert "history revised" in out.reason
     assert out.run_dir is not None
-    update = json.loads((out.run_dir / "snapshot.json").read_text(encoding="utf-8"))["update"]
+    assert out.dates_added == len(RW_DATES)
+    update = _snapshot(out.run_dir)["update"]
     assert update["mode"] == "full"
+    assert update["checkpoint"] is None
+    assert update["checkpoint_rejected"] == "results_2023-06-15"
+
+
+def test_missing_report_is_rebuilt_and_failure_is_reported(
+    rw_xlsx: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _config(tmp_path, rw_xlsx, jm=False)  # fast: no HMM/JM
+    root = tmp_path / "h"
+    log: list[str] = []
+    first = _update(cfg, root, TypeRun.NEW_DATA, until=T0, log=log)
+    assert first.mode is UpdateMode.FULL and first.run_dir is not None
+    assert f"no checkpoint yet in {(root / 'cfg').resolve()}" in log[0]
+    assert f"[ok] {first.run_dir.resolve()} (" in log[-1]
+    assert "dates processed" in log[-1]
+
+    def failing(*_a: Any, **_k: Any) -> Path:
+        raise RuntimeError("plotly exploded")
+
+    monkeypatch.setattr(report_mod, "build_report", failing)
+    log.clear()
+    with pytest.raises(RuntimeError, match="plotly exploded"):
+        _update(cfg, root, TypeRun.NEW_DATA, until=T0, report=True, log=log)
+    assert "report.html missing -> building it" in log
+    assert log[-1].startswith("[x] report failed: plotly exploded. Results are saved in ")
+    assert str(first.run_dir.resolve()) in log[-1]
+    assert not (first.run_dir / "report.html").exists()
+
+    seen: dict[str, Any] = {}
+
+    def stub(run_dir: Path, xlsx: Path, out: Path, **kw: Any) -> Path:
+        seen.update(run_dir=run_dir, **kw)
+        out.write_text("<html></html>", encoding="utf-8")
+        return out
+
+    monkeypatch.setattr(report_mod, "build_report", stub)
+    retry = _update(cfg, root, TypeRun.NEW_DATA, until=T0, report=True)
+    assert retry.mode is UpdateMode.UP_TO_DATE
+    assert retry.run_dir == first.run_dir
+    assert retry.dates_added == 0
+    assert (first.run_dir / "report.html").is_file()
+    assert seen == {"run_dir": first.run_dir, "data_until": T0}
+
+
+def test_resume_warns_when_code_changed(
+    rw_xlsx: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    cfg = _config(tmp_path, rw_xlsx, jm=False)
+    first = _update(cfg, tmp_path / "h", TypeRun.ALL, until=T0)
+    assert first.run_dir is not None
+    snap = _snapshot(first.run_dir)
+    snap["code_version"] = {"git_sha": "a" * 40, "dirty": "false"}
+    (first.run_dir / "snapshot.json").write_text(json.dumps(snap), encoding="utf-8")
+    monkeypatch.setattr(historic_mod, "code_version",
+                        lambda: {"git_sha": "b" * 40, "dirty": "false"})
+    log: list[str] = []
+    out = _update(cfg, tmp_path / "h", TypeRun.NEW_DATA, log=log)
+    assert out.mode is UpdateMode.RESUME
+    assert ("[warn] code changed since results_2023-06-15 (aaaaaaa -> bbbbbbb); "
+            "if regime math changed, rerun with type_run='all'") in log
+    assert "new dates" in log[-1]
+
+
+def test_unreadable_checkpoint_falls_back_to_full(rw_xlsx: Path, tmp_path: Path) -> None:
+    cfg = _config(tmp_path, rw_xlsx, jm=False)
+    first = _update(cfg, tmp_path / "h", TypeRun.ALL, until=T0)
+    assert first.run_dir is not None
+    (first.run_dir / "beta_series.csv").unlink()
+    log: list[str] = []
+    out = _update(cfg, tmp_path / "h", TypeRun.NEW_DATA, log=log)
+    assert out.mode is UpdateMode.FULL
+    assert out.reason.startswith("checkpoint results_2023-06-15 unreadable (")
+    assert out.reason.endswith(") -> full rerun")
+    assert any(m.startswith("[FULL] cfg: checkpoint results_2023-06-15 unreadable") for m in log)
+    assert out.run_dir is not None
+    update = _snapshot(out.run_dir)["update"]
+    assert update["checkpoint"] is None
+    assert update["checkpoint_rejected"] == "results_2023-06-15"
 
 
 @pytest.mark.slow

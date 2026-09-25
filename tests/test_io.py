@@ -119,6 +119,21 @@ def test_write_run_force_overwrites(tmp_path: Path) -> None:
     )
 
 
+def test_write_run_force_replaces_content_and_leaves_no_aside_dir(tmp_path: Path) -> None:
+    out_root = tmp_path / "outputs"
+    first = _empty_result(out_root)
+    path = write_run(first, run_date="2026-05-27", out_dir=out_root, as_of_data_date="2026-05-26")
+    (path / "stale.txt").write_text("from the previous run", encoding="utf-8")
+    (out_root / "2026-05-27.old").mkdir()  # leftover of an earlier interrupted overwrite
+    second = replace(first, warnings=["second run"])
+    path = write_run(
+        second, run_date="2026-05-27", out_dir=out_root, as_of_data_date="2026-05-26", force=True
+    )
+    assert json.loads((path / "snapshot.json").read_text())["warnings"] == ["second run"]
+    assert not (path / "stale.txt").exists()
+    assert sorted(p.name for p in out_root.iterdir()) == ["2026-05-27"]
+
+
 def _result_with_hmm(out_dir: Path) -> RunResult:
     base = _empty_result(out_dir)
     idx = pd.bdate_range("2026-05-20", periods=3)

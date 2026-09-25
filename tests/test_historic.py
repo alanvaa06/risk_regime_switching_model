@@ -53,6 +53,7 @@ def test_find_checkpoint_newest_by_name_date(tmp_path: Path) -> None:
     newest = _mk(tmp_path, "results_2026-09-25")
     _mk(tmp_path, "results_2026-10-01.tmp")               # interrupted write
     _mk(tmp_path, "results_2026-10-02", snapshot=False)   # incomplete folder
+    _mk(tmp_path, "results_2026-10-03.old")               # write_run's rename-aside leftover
     _mk(tmp_path, "scratch")
     (older / "touched.txt").write_text("x", encoding="utf-8")  # newer mtime must not matter
     cp = find_checkpoint(tmp_path)
@@ -141,6 +142,19 @@ def test_friendly_error_locked_file() -> None:
     msg = friendly_error(PermissionError(13, "Permission denied", "data.xlsx"))
     assert msg is not None
     assert "data.xlsx" in msg and "Excel" in msg
+
+
+def test_friendly_error_missing_file_names_resolved_path() -> None:
+    msg = friendly_error(FileNotFoundError(2, "No such file", "data.xlsx"))
+    assert msg is not None
+    assert str(Path("data.xlsx").resolve()) in msg
+    assert "RoRo folder" in msg and "data_path" in msg
+
+
+def test_friendly_error_missing_file_without_name() -> None:
+    msg = friendly_error(FileNotFoundError("gone"))
+    assert msg is not None
+    assert "None" not in msg
 
 
 def test_friendly_error_unknown_is_none() -> None:

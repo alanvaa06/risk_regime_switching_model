@@ -141,3 +141,14 @@ def test_load_bundle_jm_none_when_absent(minimal_run_dir: Path, tiny_xlsx: Path)
     assert bundle.seg_jm_p_off is None
     assert bundle.seg_jm_p_tr is None
     assert bundle.seg_jm_p_on is None
+
+
+def test_load_bundle_data_until_cuts_price_panels(minimal_run_dir: Path, tiny_xlsx: Path) -> None:
+    """An as-of report must not show xlsx prices past the run's data_until cut."""
+    cut = pd.Timestamp("2023-06-15")
+    bundle = load_bundle(minimal_run_dir, tiny_xlsx, window=21, data_until=cut)
+    assert bundle.dates[-1] == cut
+    assert len(bundle.dates) == 21
+    for frame in (bundle.vol, bundle.ret_3m, bundle.beta_vs_global, bundle.vol_pct):
+        assert frame is not None
+        assert frame.index.max() == cut
