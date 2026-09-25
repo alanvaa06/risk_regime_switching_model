@@ -133,8 +133,11 @@ def walk_forward(
         else None
     )
     if prior is not None and resume_at is not None:
-        probs[:resume_at], cold[:resume_at] = seed_prior_rows(prior, clean.index[:resume_at])
-        refit_dates = prior_refits_before(prior, pd.Timestamp(clean.index[resume_at]))
+        copied = clean.index[:resume_at]
+        probs[:resume_at], cold[:resume_at] = seed_prior_rows(prior, copied)
+        refit_dates = prior_refits_before(
+            prior, pd.Timestamp(copied[-1]) if len(copied) else None
+        )
         r = resume_at
     while r < n:
         block_end = min(r + refit_interval_days, n)

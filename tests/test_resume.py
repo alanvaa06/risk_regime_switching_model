@@ -93,9 +93,10 @@ def test_seed_prior_rows_missing_date_raises() -> None:
         seed_prior_rows(prior, wanted)
 
 
-def test_prior_refits_before_is_strict() -> None:
+def test_prior_refits_before_includes_last_copied() -> None:
     prior = _prior()
     idx = prior.probs.index
-    assert prior_refits_before(prior, idx[6]) == [idx[3]]
-    assert prior_refits_before(prior, idx[7]) == [idx[3], idx[6]]
-    assert prior_refits_before(prior, idx[3]) == []
+    assert prior_refits_before(prior, idx[5]) == [idx[3]]
+    assert prior_refits_before(prior, idx[6]) == [idx[3], idx[6]]
+    assert prior_refits_before(prior, idx[2]) == []
+    assert prior_refits_before(prior, None) == []

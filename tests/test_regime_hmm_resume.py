@@ -86,6 +86,30 @@ def test_resume_equals_full_with_nan_betas() -> None:
     _assert_same(resumed, walk_forward(beta, **_KW))
 
 
+def test_resume_when_restated_block_start_turns_nan() -> None:
+    """Checkpoint's last row opened a refit block; it is now NaN (restated).
+
+    A full rerun never refits on that date, so its checkpoint refit date must not
+    be copied.
+    """
+    rng = np.random.default_rng(0)
+    vals = np.concatenate(
+        [rng.normal(-1, 0.3, 22), rng.normal(1, 0.3, 22), rng.normal(0, 0.3, 22)]
+    )
+    beta = pd.Series(vals, index=pd.bdate_range("2020-01-01", periods=66), name="beta")
+    kw: dict[str, Any] = dict(
+        refit_interval_days=10, min_history_days=40, switching_variance=False
+    )
+    last = beta.index[60]  # block start (40 + 2 * 10)
+    checkpoint = walk_forward(beta.loc[:last], **kw)
+    assert last in cast(list[pd.Timestamp], checkpoint["refit_dates"])
+    beta.iloc[60] = np.nan
+    resumed = walk_forward(beta, prior=_prior_from(checkpoint, last), **kw)
+    full = walk_forward(beta, **kw)
+    _assert_same(resumed, full)
+    assert last not in cast(list[pd.Timestamp], resumed["refit_dates"])
+
+
 def test_resume_rebuilds_last_good_when_open_block_fit_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

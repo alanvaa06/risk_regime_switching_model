@@ -78,6 +78,24 @@ def test_resume_equals_full(variant: dict[str, Any], split: int) -> None:
     _assert_same(resumed, walk_forward(s, **kw))
 
 
+def test_resume_when_restated_block_start_turns_nan() -> None:
+    """Checkpoint's last row opened a refit block; it is now NaN (restated).
+
+    A full rerun never refits on that date, so its checkpoint refit date must not
+    be copied.
+    """
+    s = _series()
+    kw = _kw()
+    last = s.index[200]  # block start (120 + 2 * 40)
+    checkpoint = walk_forward(s.loc[:last], **kw)
+    assert last in checkpoint["refit_dates"]
+    s.iloc[200] = np.nan
+    resumed = walk_forward(s, prior=_prior_from(checkpoint, last), **kw)
+    full = walk_forward(s, **kw)
+    _assert_same(resumed, full)
+    assert last not in resumed["refit_dates"]
+
+
 @pytest.mark.parametrize(
     "variant",
     [

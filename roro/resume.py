@@ -78,9 +78,18 @@ def seed_prior_rows(
     return probs, cold
 
 
-def prior_refits_before(prior: SegmentPrior, cutoff: pd.Timestamp) -> list[pd.Timestamp]:
-    """Converged refit dates strictly before ``cutoff`` (the open block's first date)."""
-    return [d for d in prior.refit_dates if d < cutoff]
+def prior_refits_before(
+    prior: SegmentPrior, last_copied: pd.Timestamp | None
+) -> list[pd.Timestamp]:
+    """Converged refit dates on or before ``last_copied`` (the last copied row).
+
+    Bounded by the last copied row, not the open block's first date: a checkpoint
+    row after it that is now NaN or gone (e.g. a restated last row) may hold a
+    refit date a full rerun never produces. None (nothing copied) -> [].
+    """
+    if last_copied is None:
+        return []
+    return [d for d in prior.refit_dates if d <= last_copied]
 
 
 BETA_TOLERANCE: float = 1e-12
