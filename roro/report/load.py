@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from roro.io import load_panel, load_prices
+from roro.io import cut_prices, load_panel, load_prices
 from roro.report.beta_vs_global import compute_beta_vs_global
 from roro.report.bundle import DataBundle
 from roro.report.errors import ReportInputError
@@ -41,10 +41,16 @@ def _build_series_panels(
     xlsx_path: Path,
     *,
     window: int,
+    data_until: pd.Timestamp | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Compute per-series vol, ret_3m, beta_vs_global, meta, vol_pct from xlsx."""
+    """Compute per-series vol, ret_3m, beta_vs_global, meta, vol_pct from xlsx.
+
+    ``data_until`` drops price rows after that date (as-of report of an update run).
+    """
     universe = load_panel(xlsx_path)
     prices = load_prices(xlsx_path)
+    if data_until is not None:
+        prices = cut_prices(prices, data_until)
 
     # Build per-series price frame: column = "<country>_Eq" or "<country>_FI"
     eq = prices.equity_lc.copy()
@@ -119,6 +125,7 @@ def load_bundle(
     xlsx_path: Path,
     *,
     window: int = DEFAULT_WINDOW,
+    data_until: pd.Timestamp | None = None,
 ) -> DataBundle:
     """Load all data required to build the report.
 
@@ -126,6 +133,7 @@ def load_bundle(
         run_dir: engine run directory (contains snapshot.json + CSVs).
         xlsx_path: source xlsx with Equity_LC + Fixed_Income_LC + Panel sheets.
         window: number of trailing business days to expose in the bundle.
+        data_until: ignore xlsx prices after this date (None = use all rows).
 
     Returns:
         Frozen DataBundle.
@@ -138,7 +146,9 @@ def load_bundle(
     beta_series = _read_required_csv(run_dir, "beta_series.csv")
     regimes = _read_required_csv(run_dir, "regimes.csv")
 
-    vol, ret_3m, beta_vs_global, meta, vol_pct = _build_series_panels(xlsx_path, window=window)
+    vol, ret_3m, beta_vs_global, meta, vol_pct = _build_series_panels(
+        xlsx_path, window=window, data_until=data_until
+    )
     dates = vol.index
 
     seg_beta = _pivot_segment(beta_series, value_col="beta", scheme_filter="cap_wtd")

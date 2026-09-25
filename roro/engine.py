@@ -11,8 +11,10 @@ from roro.config import EngineConfig
 from roro.correlation import compute_correlation_panel
 from roro.fred_client import FredClient
 from roro.io import (
+    beta_long,
     code_version,
     compute_data_fingerprint,
+    cut_prices,
     load_fred,
     load_panel,
     load_prices,
@@ -21,13 +23,16 @@ from roro.io import (
 from roro.regime_hmm import classify_hmm
 from roro.regime_jm import classify_jm
 from roro.regression import compute_beta_by_segment
+from roro.resume import copied_through, verify_beta_history
 from roro.returns import daily_log_returns, ewma_vol, total_return_3m
 from roro.segments import partition
 from roro.tripwire import compute_tripwire_signal
 from roro.types import (
+    BetaBySegment,
     HmmRegimeFrame,
     JmRegimeFrame,
     RegimeFrame,
+    ResumeState,
     ReturnsFrame,
     RunResult,
     ValidationFrame,
@@ -48,6 +53,8 @@ def run(
     run_date: str,
     as_of_data_date: str,
     force: bool = False,
+    data_until: str | None = None,
+    resume: ResumeState | None = None,
 ) -> RunResult:
     """Execute the full RoRo pipeline and persist outputs under ``cfg.output_dir``.
 
@@ -55,6 +62,13 @@ def run(
     segment partition -> cross-sectional regression -> classification ->
     correlation panel -> external + internal validation -> tripwire ->
     alerts -> write run.
+
+    data_until: drop prices after this date (YYYY-MM-DD) before any computation.
+    resume: checkpoint state. HMM/JM copy their closed refit blocks from it, so
+    betas must equal the checkpoint's through the last copied date (else
+    HistoryRevisedError, nothing written). Later rows, such as a restated last
+    checkpoint row, may differ: they are recomputed. With nothing copied (no
+    overlay enabled or reusable) the check is skipped.
     """
     warnings: list[str] = []
 
@@ -62,6 +76,8 @@ def run(
     universe = load_panel(cfg.data_path)
     warnings.extend(validate_universe(universe))
     prices = load_prices(cfg.data_path)
+    if data_until is not None:
+        prices = cut_prices(prices, pd.Timestamp(data_until))
     warnings.extend(validate_prices(prices))
 
     # 2) External (FRED) pull aligned to the equity price window.
@@ -92,6 +108,12 @@ def run(
         min_n=cfg.min_n_per_cut,
     )
 
+    # 4b) Resume guard: history the overlays copy from the checkpoint must be unchanged.
+    if resume is not None:
+        through = _resume_guard_through(beta, cfg, resume)
+        if through is not None:
+            verify_beta_history(beta_long(beta), resume.beta_series, through=through)
+
     # 5) Classify percentile/tercile/quintile/direction per segment.
     regime = classify(
         beta,
@@ -104,14 +126,20 @@ def run(
 
     # 5b) Optional HMM regime classifier (parallel method, off by default).
     regime_hmm = (
-        classify_hmm(beta, cfg=cfg, thin_cuts=frozenset({"LatAm"}))
+        classify_hmm(
+            beta, cfg=cfg, thin_cuts=frozenset({"LatAm"}),
+            prior=resume.hmm if resume is not None else None,
+        )
         if cfg.hmm_enabled
         else None
     )
 
     # 5c) Optional JM regime classifier (parallel method, off by default).
     regime_jm = (
-        classify_jm(beta, cfg=cfg, thin_cuts=frozenset({"LatAm"}))
+        classify_jm(
+            beta, cfg=cfg, thin_cuts=frozenset({"LatAm"}),
+            prior=resume.jm if resume is not None else None,
+        )
         if cfg.jm_enabled
         else None
     )
@@ -221,6 +249,37 @@ def run(
         force=force,
     )
     return result
+
+
+def _resume_guard_through(
+    beta: BetaBySegment, cfg: EngineConfig, resume: ResumeState
+) -> pd.Timestamp | None:
+    """Latest date whose beta a resumed HMM/JM walk-forward reuses; None if nothing is.
+
+    The MAX over enabled overlays and segments with a prior: verify_beta_history
+    checks every segment up to one date, so it must cover the longest copied range.
+    """
+    overlays = [
+        (resume.hmm, cfg.hmm_min_history_days, cfg.hmm_refit_interval_days, cfg.hmm_enabled),
+        (resume.jm, cfg.jm_min_history_days, cfg.jm_refit_interval_days, cfg.jm_enabled),
+    ]
+    cutoffs: list[pd.Timestamp] = []
+    for priors, min_history, interval, enabled in overlays:
+        if not enabled or priors is None:
+            continue
+        for seg, bf in beta.by_segment.items():
+            prior = priors.get(seg)
+            if prior is None:
+                continue
+            cut = copied_through(
+                bf.cap_wtd["beta"].dropna().index,
+                prior.last_date,
+                min_history_days=min_history,
+                refit_interval_days=interval,
+            )
+            if cut is not None:
+                cutoffs.append(cut)
+    return max(cutoffs) if cutoffs else None
 
 
 def _anchor_labels(

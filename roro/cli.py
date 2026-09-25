@@ -1,4 +1,4 @@
-"""Thin Click CLI: `roro run`, `roro backtest`, `roro report`."""
+"""Thin Click CLI: `roro run`, `roro backtest`, `roro report`, `roro update`."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ load_dotenv()
 def _build_fred_client(api_key: str | None) -> FredClient:
     if not api_key:
         raise click.UsageError(
-            "FRED_API_KEY env var (or --fred-key) is required for `roro run`."
+            "FRED_API_KEY env var (or --fred-key) is required."
         )
     return FredApiClient(api_key=api_key)
 
@@ -192,3 +192,66 @@ def cmd_report(
 
     result = build_report(run_dir, xlsx_path, out_path, window=window)
     click.echo(f"OK: {result}")
+
+
+@main.command("update")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    required=True,
+)
+@click.option("--full", is_flag=True, help="Reprocess the full history (ignore checkpoints).")
+@click.option(
+    "--data-until",
+    default=None,
+    help="Only use data up to this date (DD-MM-YYYY or YYYY-MM-DD). Default: latest.",
+)
+@click.option("--no-report", is_flag=True, help="Skip building report.html.")
+@click.option("--fred-key", default=None, help="Defaults to FRED_API_KEY env.")
+@click.option(
+    "--historic-root",
+    type=click.Path(file_okay=False, path_type=Path),
+    # Duplicates roro.historic.DEFAULT_HISTORIC_ROOT on purpose: that module is
+    # imported lazily inside cmd_update to keep `roro --help` fast.
+    default=Path("outputs") / "historic",
+    show_default=True,
+    help="Folder holding one subfolder per config (relative to the current directory).",
+)
+def cmd_update(
+    config_path: Path,
+    full: bool,
+    data_until: str | None,
+    no_report: bool,
+    fred_key: str | None,
+    historic_root: Path,
+) -> None:
+    """Process only dates not yet in outputs/historic/<config>/ (or everything with --full)."""
+    # Lazy import: historic pulls the engine; keeps `roro --help` fast.
+    from roro.historic import (  # noqa: PLC0415
+        TypeRun,
+        friendly_error,
+        parse_user_date,
+        run_update,
+    )
+
+    try:
+        until = parse_user_date(data_until) if data_until else None
+    except ValueError as exc:
+        raise click.BadParameter(str(exc), param_hint="--data-until") from None
+    client = _build_fred_client(fred_key or os.environ.get("FRED_API_KEY", ""))
+    try:
+        run_update(
+            config_path,
+            type_run=TypeRun.ALL if full else TypeRun.NEW_DATA,
+            data_until=until,
+            build_report=not no_report,
+            fred_client=client,
+            historic_root=historic_root,
+            echo=click.echo,
+        )
+    except Exception as exc:
+        message = friendly_error(exc)
+        if message is None:
+            raise
+        raise click.ClickException(message) from None

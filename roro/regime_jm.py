@@ -9,6 +9,8 @@ to FIT on a closed historical window -- never for the live signal.
 from __future__ import annotations
 
 import warnings
+from collections.abc import Mapping
+from functools import partial
 from typing import Any, cast
 
 import numpy as np
@@ -17,12 +19,19 @@ from numpy.typing import NDArray
 
 from roro.config import EngineConfig
 from roro.jump_model import (
+    JumpFit,
     discretize_simplex,
     fit_jump_model,
     online_soft_states,
     online_states,
 )
-from roro.types import BetaBySegment, JmRegimeFrame
+from roro.resume import (
+    HistoryRevisedError,
+    prior_refits_before,
+    resume_block_start,
+    seed_prior_rows,
+)
+from roro.types import BetaBySegment, JmRegimeFrame, SegmentPrior
 
 _ORDERED_LABELS = ("Risk-off", "Transitional", "Risk-on")
 _UNKNOWN = "Unknown"
@@ -33,6 +42,37 @@ def _causal_scaler(window: NDArray[np.float64]) -> tuple[float, float]:
     mean = float(window.mean())
     std = float(window.std(ddof=0))
     return mean, (std if std > 0.0 else 1.0)
+
+
+def _fit_at(
+    cvals: NDArray[np.float64],
+    r: int,
+    *,
+    window: str,
+    rolling_window_days: int,
+    n_states: int,
+    jump_penalty: float,
+    n_init: int,
+    max_iter: int,
+    tol: float,
+    seed: int,
+) -> tuple[JumpFit, float, float]:
+    """Fit on the point-in-time window ending before position r -> (fit, mean, std)."""
+    fit_lo = 0 if window == "expanding" else max(0, r - rolling_window_days)
+    fit_win = cvals[fit_lo:r]
+    mean, std = _causal_scaler(fit_win)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        fit = fit_jump_model(
+            (fit_win - mean) / std,
+            k=n_states,
+            jump_penalty=jump_penalty,
+            n_init=n_init,
+            max_iter=max_iter,
+            tol=tol,
+            seed=seed,
+        )
+    return fit, mean, std
 
 
 def walk_forward(
@@ -49,11 +89,18 @@ def walk_forward(
     max_iter: int,
     tol: float,
     seed: int,
+    prior: SegmentPrior | None = None,
 ) -> dict[str, Any]:
-    """Expanding/rolling refit + per-block frozen-scaler forward-DP online inference."""
+    """Expanding/rolling refit + per-block frozen-scaler forward-DP online inference.
+
+    prior: a checkpoint of this segment. Rows of closed refit blocks are copied
+    and the loop restarts at the open block, so the output equals a run without
+    prior whenever beta up to prior.last_date is unchanged.
+    """
     full_index = beta.index
     clean = beta.dropna()
     n = len(clean)
+    cvals = clean.to_numpy(dtype=np.float64)
 
     probs = np.full((n, n_states), np.nan)
     cold = np.ones(n, dtype=bool)
@@ -61,32 +108,56 @@ def walk_forward(
     last_good: tuple[NDArray[np.float64], float, float] | None = None
 
     grid = discretize_simplex(n_states, 0.05) if continuous else None
+    fit_at = partial(
+        _fit_at,
+        cvals,
+        window=window,
+        rolling_window_days=rolling_window_days,
+        n_states=n_states,
+        jump_penalty=jump_penalty,
+        n_init=n_init,
+        max_iter=max_iter,
+        tol=tol,
+        seed=seed,
+    )
 
     r = min_history_days
+    resume_at = (
+        resume_block_start(
+            clean.index,
+            prior.last_date,
+            min_history_days=min_history_days,
+            refit_interval_days=refit_interval_days,
+        )
+        if prior is not None
+        else None
+    )
+    if prior is not None and resume_at is not None:
+        copied = clean.index[:resume_at]
+        probs[:resume_at], cold[:resume_at] = seed_prior_rows(prior, copied)
+        refit_dates = prior_refits_before(
+            prior, pd.Timestamp(copied[-1]) if len(copied) else None
+        )
+        r = resume_at
     while r < n:
         block_end = min(r + refit_interval_days, n)
-        fit_lo = 0 if window == "expanding" else max(0, r - rolling_window_days)
-        fit_win = clean.to_numpy(dtype=np.float64)[fit_lo:r]
-        mean, std = _causal_scaler(fit_win)
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            fit = fit_jump_model(
-                (fit_win - mean) / std,
-                k=n_states,
-                jump_penalty=jump_penalty,
-                n_init=n_init,
-                max_iter=max_iter,
-                tol=tol,
-                seed=seed,
-            )
+        fit, mean, std = fit_at(r)
         if fit.converged:
             last_good = (fit.centroids, mean, std)
             refit_dates.append(pd.Timestamp(clean.index[r]))
+        elif last_good is None and refit_dates:
+            # Resumed run only (a fresh run appends refit_dates together with
+            # last_good): rebuild the fallback a full run carried into this block.
+            fb, fb_mean, fb_std = fit_at(int(clean.index.searchsorted(refit_dates[-1])))
+            if not fb.converged:
+                raise HistoryRevisedError(
+                    f"refit at {refit_dates[-1].date()} no longer converges"
+                )
+            last_good = (fb.centroids, fb_mean, fb_std)
         used = (fit.centroids, mean, std) if fit.converged else last_good
         if used is not None:
             centroids, u_mean, u_std = used
             inf_lo = 0 if window == "expanding" else max(0, r - rolling_window_days)
-            cvals = clean.to_numpy(dtype=np.float64)
             inf_win = (cvals[inf_lo:block_end] - u_mean) / u_std
             if continuous:
                 assert grid is not None
@@ -129,9 +200,17 @@ def walk_forward(
 
 
 def classify_jm(
-    bbs: BetaBySegment, *, cfg: EngineConfig, thin_cuts: frozenset[str]
+    bbs: BetaBySegment,
+    *,
+    cfg: EngineConfig,
+    thin_cuts: frozenset[str],
+    prior: Mapping[str, SegmentPrior] | None = None,
 ) -> JmRegimeFrame:
-    """Per-segment JM classification mirroring classify_hmm's loop + frame shape."""
+    """Per-segment JM classification mirroring classify_hmm's loop + frame shape.
+
+    prior: per-segment checkpoint rows (see walk_forward); a missing segment runs
+    in full.
+    """
     state: dict[str, object] = {}
     label: dict[str, object] = {}
     p_off: dict[str, object] = {}
@@ -159,6 +238,7 @@ def classify_jm(
             max_iter=cfg.jm_max_iter,
             tol=cfg.jm_tol,
             seed=cfg.jm_random_seed,
+            prior=prior.get(cut) if prior is not None else None,
         )
         state[cut] = out["state"]
         label[cut] = out["label"]

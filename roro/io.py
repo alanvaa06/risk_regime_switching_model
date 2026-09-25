@@ -24,7 +24,9 @@ from roro.types import (
     JmRegimeFrame,
     PriceFrame,
     RegimeFrame,
+    ResumeState,
     RunResult,
+    SegmentPrior,
     Universe,
     ValidationFrame,
 )
@@ -84,6 +86,89 @@ def _read_price_sheet(xlsx_path: Path | str, sheet: str) -> pd.DataFrame:
     data = data.set_index("date").sort_index()
     data.columns.name = None
     return data.astype(float)
+
+
+_BETA_COLUMNS: tuple[str, ...] = (
+    "date", "segment", "scheme", "beta", "r2", "n", "suppressed", "singular",
+)
+_PROB_COLUMNS: list[str] = ["p_risk_off", "p_transitional", "p_risk_on"]
+
+
+def cut_prices(prices: PriceFrame, until: pd.Timestamp) -> PriceFrame:
+    """Prices on or before ``until`` (the data_until cut of an update run)."""
+    return PriceFrame(equity_lc=prices.equity_lc.loc[:until], fi_lc=prices.fi_lc.loc[:until])
+
+
+def beta_long(bbs: BetaBySegment) -> pd.DataFrame:
+    """Long (date, segment, scheme, beta, r2, n, suppressed, singular) frame of beta_series.csv."""
+    cap = _stack_segment_frame({k: v.cap_wtd for k, v in bbs.by_segment.items()}, "cap_wtd")
+    eq = _stack_segment_frame({k: v.eq_wtd for k, v in bbs.by_segment.items()}, "eq_wtd")
+    if cap.empty and eq.empty:
+        return pd.DataFrame(columns=list(_BETA_COLUMNS))
+    return pd.concat([cap, eq], ignore_index=True)
+
+
+def read_resume_state(run_dir: Path, last_date: pd.Timestamp) -> ResumeState:
+    """Everything a RESUME run needs from a checkpoint folder (exact float round trip)."""
+    beta_path = run_dir / "beta_series.csv"
+    beta = pd.read_csv(
+        beta_path,
+        parse_dates=["date"],
+        float_precision="round_trip",
+        dtype={"segment": str, "scheme": str},
+    )
+    return ResumeState(
+        checkpoint_date=last_date,
+        beta_series=beta,
+        hmm=_read_overlay_prior(
+            run_dir / "regimes_hmm.csv", run_dir / "hmm_refit_log.csv", last_date
+        ),
+        jm=_read_overlay_prior(
+            run_dir / "regimes_jm.csv", run_dir / "jm_refit_log.csv", last_date
+        ),
+    )
+
+
+def _read_cold_start(col: pd.Series, *, source: Path) -> pd.Series:
+    """Map True/False/"True"/"False" -> bool, NaN -> True (cold by default); else raise."""
+    mapped = col.map({True: True, False: False, "True": True, "False": False})
+    mapped = mapped.mask(col.isna(), True)
+    unmapped = mapped.isna()
+    if bool(unmapped.any()):
+        bad = col.loc[unmapped].iloc[0]
+        raise ValueError(f"{source}: unexpected cold_start value {bad!r}")
+    return mapped.astype(bool)
+
+
+def _read_overlay_prior(
+    rows_path: Path, log_path: Path, last_date: pd.Timestamp
+) -> dict[str, SegmentPrior] | None:
+    if not rows_path.exists():
+        return None
+    rows = pd.read_csv(
+        rows_path,
+        parse_dates=["date"],
+        float_precision="round_trip",
+        dtype={"segment": str},
+    )
+    log = (
+        pd.read_csv(log_path, parse_dates=["refit_date"], dtype={"segment": str})
+        if log_path.exists()
+        else pd.DataFrame(columns=["segment", "refit_date"])
+    )
+    segment_str = rows["segment"].astype(str)
+    out: dict[str, SegmentPrior] = {}
+    for seg in sorted(segment_str.unique()):
+        g = rows.loc[segment_str == seg].set_index("date").sort_index()
+        refits = log.loc[log["segment"].astype(str) == seg, "refit_date"]
+        cold_start = _read_cold_start(g["cold_start"], source=rows_path)
+        out[seg] = SegmentPrior(
+            probs=g[_PROB_COLUMNS],
+            cold_start=cold_start,
+            refit_dates=tuple(sorted(pd.Timestamp(d) for d in refits)),
+            last_date=last_date,
+        )
+    return out
 
 
 def compute_data_fingerprint(xlsx_path: Path) -> dict[str, str]:
@@ -146,9 +231,22 @@ def write_run(
         json.dumps(snapshot, indent=2, default=str), encoding="utf-8"
     )
 
-    if final.exists():
-        shutil.rmtree(final)
-    tmp.rename(final)
+    if not final.exists():
+        tmp.rename(final)
+        return final
+    # Rename-aside, never delete-in-place: a file locked by Excel makes the first rename
+    # fail cleanly (PermissionError) before anything is removed, instead of leaving a
+    # half-deleted folder that still looks like a valid checkpoint.
+    old = out_dir / f"{run_date}.old"
+    if old.exists():
+        shutil.rmtree(old)
+    final.rename(old)
+    try:
+        tmp.rename(final)
+    except OSError:
+        old.rename(final)  # put the previous run back
+        raise
+    shutil.rmtree(old, ignore_errors=True)
     return final
 
 
@@ -184,14 +282,11 @@ def _stack_segment_frame(frames: dict[str, pd.DataFrame], scheme_label: str) -> 
 
 
 def _write_beta(bbs: BetaBySegment, path: Path) -> None:
-    cap = _stack_segment_frame({k: v.cap_wtd for k, v in bbs.by_segment.items()}, "cap_wtd")
-    eq = _stack_segment_frame({k: v.eq_wtd for k, v in bbs.by_segment.items()}, "eq_wtd")
-    if cap.empty and eq.empty:
-        path.write_text(
-            "date,segment,scheme,beta,r2,n,suppressed,singular\n", encoding="utf-8"
-        )
+    frame = beta_long(bbs)
+    if frame.empty:
+        path.write_text(",".join(_BETA_COLUMNS) + "\n", encoding="utf-8")
         return
-    pd.concat([cap, eq], ignore_index=True).to_csv(path, index=False)
+    frame.to_csv(path, index=False)
 
 
 def _melt_with_date(frame: pd.DataFrame, value_name: str) -> pd.DataFrame:

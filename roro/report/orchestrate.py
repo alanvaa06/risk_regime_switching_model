@@ -36,6 +36,7 @@ def build_report(
     out_path: Path,
     *,
     window: int = DEFAULT_WINDOW,
+    data_until: pd.Timestamp | None = None,
 ) -> Path:
     """Build a single self-contained HTML report from an engine run dir.
 
@@ -44,6 +45,7 @@ def build_report(
         xlsx_path: source xlsx with Equity_LC + Fixed_Income_LC + Panel.
         out_path: destination HTML file.
         window: trailing business-day window exposed in the bundle.
+        data_until: ignore xlsx prices after this date (None = use all rows).
 
     Returns:
         Path that was written (== out_path).
@@ -52,7 +54,7 @@ def build_report(
         ReportInputError: required inputs missing or invalid.
         FileNotFoundError: xlsx_path does not exist.
     """
-    bundle = load_bundle(run_dir, xlsx_path, window=window)
+    bundle = load_bundle(run_dir, xlsx_path, window=window, data_until=data_until)
     specs = [
         FigureSpec(scatter_vol_return(bundle), "fig_scatter_vol", "Risk vs Return"),
         FigureSpec(scatter_beta_return(bundle), "fig_scatter_beta", "Beta vs Return"),

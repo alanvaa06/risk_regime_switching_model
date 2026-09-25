@@ -8,6 +8,7 @@ Filtered probabilities only — never smoothed (smoothing peeks at the future).
 from __future__ import annotations
 
 import warnings
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import cast
 
@@ -16,7 +17,13 @@ import pandas as pd
 from statsmodels.tsa.regime_switching.markov_regression import MarkovRegression
 
 from roro.config import EngineConfig
-from roro.types import BetaBySegment, HmmRegimeFrame
+from roro.resume import (
+    HistoryRevisedError,
+    prior_refits_before,
+    resume_block_start,
+    seed_prior_rows,
+)
+from roro.types import BetaBySegment, HmmRegimeFrame, SegmentPrior
 
 _K_REGIMES = 3
 _ORDERED_LABELS = ("Risk-off", "Transitional", "Risk-on")
@@ -117,6 +124,7 @@ def walk_forward(
     refit_interval_days: int,
     min_history_days: int,
     switching_variance: bool,
+    prior: SegmentPrior | None = None,
 ) -> dict[str, object]:
     """Causal per-segment HMM labels over the full beta index.
 
@@ -129,6 +137,10 @@ def walk_forward(
     Within a refit block [r, r'), filtered probs come from one .filter() over
     beta[:r'] with params(beta[:r]) (causal). NaN beta rows are dropped before
     fitting and emitted as Unknown.
+
+    prior: a checkpoint of this segment. Rows of closed refit blocks are copied
+    and the loop restarts at the open block, so the output equals a run without
+    prior whenever beta up to prior.last_date is unchanged.
     """
     full_index = beta.index
     clean = beta.dropna()
@@ -140,12 +152,39 @@ def walk_forward(
 
     last_good: _FitResult | None = None
     r = min_history_days
+    resume_at = (
+        resume_block_start(
+            clean.index,
+            prior.last_date,
+            min_history_days=min_history_days,
+            refit_interval_days=refit_interval_days,
+        )
+        if prior is not None
+        else None
+    )
+    if prior is not None and resume_at is not None:
+        copied = clean.index[:resume_at]
+        probs[:resume_at], cold[:resume_at] = seed_prior_rows(prior, copied)
+        refit_dates = prior_refits_before(
+            prior, pd.Timestamp(copied[-1]) if len(copied) else None
+        )
+        r = resume_at
     while r < n:
         block_end = min(r + refit_interval_days, n)
         fit = _fit_params(clean.iloc[:r], switching_variance=switching_variance)
         if fit.converged:
             last_good = fit
             refit_dates.append(pd.Timestamp(clean.index[r]))
+        elif last_good is None and refit_dates:
+            # Resumed run only (a fresh run appends refit_dates together with
+            # last_good): rebuild the fallback a full run carried into this block.
+            at = int(clean.index.searchsorted(refit_dates[-1]))
+            fallback = _fit_params(clean.iloc[:at], switching_variance=switching_variance)
+            if not fallback.converged:
+                raise HistoryRevisedError(
+                    f"refit at {refit_dates[-1].date()} no longer converges"
+                )
+            last_good = fallback
         used = fit if fit.converged else last_good
         if used is not None:
             block_probs = _filtered_probs(
@@ -181,8 +220,13 @@ def classify_hmm(
     *,
     cfg: EngineConfig,
     thin_cuts: frozenset[str],
+    prior: Mapping[str, SegmentPrior] | None = None,
 ) -> HmmRegimeFrame:
-    """Run the walk-forward HMM per segment; assemble an HmmRegimeFrame."""
+    """Run the walk-forward HMM per segment; assemble an HmmRegimeFrame.
+
+    prior: per-segment checkpoint rows (see walk_forward); a missing segment runs
+    in full.
+    """
     state: dict[str, object] = {}
     label: dict[str, object] = {}
     p_off: dict[str, object] = {}
@@ -201,6 +245,7 @@ def classify_hmm(
             refit_interval_days=cfg.hmm_refit_interval_days,
             min_history_days=cfg.hmm_min_history_days,
             switching_variance=cfg.hmm_switching_variance,
+            prior=prior.get(cut) if prior is not None else None,
         )
         state[cut] = out["state"]
         label[cut] = out["label"]
