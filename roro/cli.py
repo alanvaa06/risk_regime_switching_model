@@ -19,7 +19,7 @@ load_dotenv()
 def _build_fred_client(api_key: str | None) -> FredClient:
     if not api_key:
         raise click.UsageError(
-            "FRED_API_KEY env var (or --fred-key) is required for `roro run`."
+            "FRED_API_KEY env var (or --fred-key) is required."
         )
     return FredApiClient(api_key=api_key)
 
@@ -212,8 +212,11 @@ def cmd_report(
 @click.option(
     "--historic-root",
     type=click.Path(file_okay=False, path_type=Path),
+    # Duplicates roro.historic.DEFAULT_HISTORIC_ROOT on purpose: that module is
+    # imported lazily inside cmd_update to keep `roro --help` fast.
     default=Path("outputs") / "historic",
     show_default=True,
+    help="Folder holding one subfolder per config (relative to the current directory).",
 )
 def cmd_update(
     config_path: Path,
