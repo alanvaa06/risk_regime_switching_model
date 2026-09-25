@@ -67,6 +67,14 @@ def test_find_checkpoint_missing_or_empty(tmp_path: Path) -> None:
     assert find_checkpoint(tmp_path) is None
 
 
+def test_find_checkpoint_skips_calendar_invalid_date(tmp_path: Path) -> None:
+    valid = _mk(tmp_path, "results_2026-09-18")
+    _mk(tmp_path, "results_2026-13-45")  # matches the regex but is not a real date
+    cp = find_checkpoint(tmp_path)
+    assert cp is not None
+    assert cp.run_dir == valid
+
+
 def test_config_changes_ignores_paths_and_key() -> None:
     old = {"a": 1, "output_dir": "x", "data_path": "d1", "fred_api_key": None, "b": 2}
     new = {"a": 1, "output_dir": "y", "data_path": "d2", "fred_api_key": "k", "b": 3, "c": 0}
@@ -137,3 +145,9 @@ def test_friendly_error_locked_file() -> None:
 
 def test_friendly_error_unknown_is_none() -> None:
     assert friendly_error(ValueError("boom")) is None
+
+
+def test_friendly_error_no_filename_omits_none() -> None:
+    msg = friendly_error(PermissionError("denied"))
+    assert msg is not None
+    assert "None" not in msg

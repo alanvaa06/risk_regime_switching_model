@@ -94,7 +94,8 @@ def available_configs(configs_dir: Path) -> dict[str, Path]:
 def find_checkpoint(historic_dir: Path) -> Checkpoint | None:
     """Newest complete ``results_YYYY-MM-DD`` folder, by the date in its name.
 
-    Skips ``.tmp`` folders (interrupted writes) and folders without snapshot.json.
+    Skips ``.tmp`` folders (interrupted writes), folders without snapshot.json, and
+    folders whose date is calendar-invalid (e.g. ``results_2026-13-45``).
     """
     if not historic_dir.is_dir():
         return None
@@ -102,7 +103,11 @@ def find_checkpoint(historic_dir: Path) -> Checkpoint | None:
     for p in historic_dir.iterdir():
         m = _RESULTS_DIR.match(p.name)
         if m and p.is_dir() and (p / "snapshot.json").is_file():
-            found.append((pd.Timestamp(m.group(1)), p))
+            try:
+                ts = pd.Timestamp(m.group(1))
+            except ValueError:
+                continue
+            found.append((ts, p))
     if not found:
         return None
     last_date, run_dir = max(found)
@@ -111,7 +116,11 @@ def find_checkpoint(historic_dir: Path) -> Checkpoint | None:
 
 
 def config_changes(old: Mapping[str, Any], new: Mapping[str, Any]) -> list[str]:
-    """Sorted config keys whose value differs (paths and secrets ignored)."""
+    """Sorted config keys whose value differs (paths and secrets ignored).
+
+    Precondition: both mappings must be JSON-round-tripped (as snapshot.json stores
+    them); run_update passes ``_json_config(cfg)``.
+    """
     keys = (set(old) | set(new)) - _CONFIG_KEYS_IGNORED
     return sorted(k for k in keys if old.get(k) != new.get(k))
 
@@ -146,9 +155,10 @@ def plan_update(
 def friendly_error(exc: BaseException) -> str | None:
     """Plain-English message for errors a non-developer can fix; None otherwise."""
     if isinstance(exc, PermissionError):
-        return f"Cannot open {exc.filename}: close it in Excel (or any other program) and retry"
+        name = exc.filename or "the file"
+        return f"Cannot open {name}: close it in Excel (or any other program) and retry"
     if isinstance(exc, FileNotFoundError):
-        return f"File not found: {exc.filename}"
+        return f"File not found: {exc.filename or 'the file'}"
     return None
 
 
