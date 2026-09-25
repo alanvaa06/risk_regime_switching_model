@@ -116,6 +116,16 @@ class SegmentPrior:
 
 
 @dataclass(frozen=True)
+class ResumeState:
+    """Checkpoint content a RESUME run needs (see roro/historic.py)."""
+
+    checkpoint_date: pd.Timestamp
+    beta_series: pd.DataFrame
+    hmm: dict[str, SegmentPrior] | None = None
+    jm: dict[str, SegmentPrior] | None = None
+
+
+@dataclass(frozen=True)
 class CorrelationFrame:
     avg_pairwise_3m: pd.DataFrame
     pc1_variance_share: pd.DataFrame

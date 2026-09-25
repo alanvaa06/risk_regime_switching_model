@@ -57,3 +57,34 @@ def seed_prior_rows(
 def prior_refits_before(prior: SegmentPrior, cutoff: pd.Timestamp) -> list[pd.Timestamp]:
     """Converged refit dates strictly before ``cutoff`` (the open block's first date)."""
     return [d for d in prior.refit_dates if d < cutoff]
+
+
+BETA_TOLERANCE: float = 1e-12
+_BETA_KEYS: list[str] = ["date", "segment", "scheme"]
+
+
+def verify_beta_history(
+    current: pd.DataFrame, checkpoint: pd.DataFrame, *, through: pd.Timestamp
+) -> None:
+    """Raise HistoryRevisedError unless current betas up to ``through`` equal the checkpoint's.
+
+    Both frames are long beta_series layout. Same (date, segment, scheme) rows,
+    |diff| <= BETA_TOLERANCE, NaN == NaN.
+    """
+    cur = (
+        current.loc[current["date"] <= through]
+        .set_index(_BETA_KEYS)["beta"]
+        .astype(float)
+        .sort_index()
+    )
+    old = checkpoint.set_index(_BETA_KEYS)["beta"].astype(float).sort_index()
+    if not cur.index.equals(old.index):
+        first = cur.index.symmetric_difference(old.index)[0]
+        raise HistoryRevisedError(
+            f"date/segment rows differ from checkpoint (first: "
+            f"{pd.Timestamp(first[0]).date()} {first[1]} {first[2]})"
+        )
+    same = ((cur - old).abs() <= BETA_TOLERANCE) | (cur.isna() & old.isna())
+    if not bool(same.all()):
+        d, seg, scheme = same.index[~same.to_numpy()][0]
+        raise HistoryRevisedError(f"beta changed on {pd.Timestamp(d).date()} {seg} {scheme}")
