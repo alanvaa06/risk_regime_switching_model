@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -18,6 +19,14 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+
+from roro.config import EngineConfig, load_config
+from roro.config import to_dict as config_to_dict
+from roro.engine import run as engine_run
+from roro.fred_client import FredClient
+from roro.io import cut_prices, load_prices, read_resume_state
+from roro.resume import HistoryRevisedError
+from roro.types import ResumeState
 
 DEFAULT_HISTORIC_ROOT: Path = Path("outputs") / "historic"
 
@@ -141,3 +150,118 @@ def friendly_error(exc: BaseException) -> str | None:
     if isinstance(exc, FileNotFoundError):
         return f"File not found: {exc.filename}"
     return None
+
+
+def run_update(
+    config_path: Path,
+    *,
+    type_run: TypeRun,
+    data_until: pd.Timestamp | None,
+    build_report: bool,
+    fred_client: FredClient,
+    historic_root: Path = DEFAULT_HISTORIC_ROOT,
+    echo: Callable[[str], None] = print,
+) -> UpdateOutcome:
+    """Run one config into <historic_root>/<config-stem>/results_<last-data-date>/.
+
+    RESUME reuses the newest checkpoint; a revised history falls back to FULL.
+    UP_TO_DATE writes nothing. All console output is ASCII.
+    """
+    started = time.perf_counter()
+    name = config_path.stem
+    historic_dir = historic_root / name
+    cfg = load_config(config_path, overrides={"output_dir": historic_dir})
+    dates = _data_dates(cfg.data_path, data_until)
+    data_last = pd.Timestamp(dates.max())
+    checkpoint = find_checkpoint(historic_dir)
+    plan = plan_update(
+        type_run=type_run,
+        checkpoint=checkpoint,
+        config_now=_json_config(cfg),
+        data_last=data_last,
+        data_until=data_until,
+    )
+    echo(f"[{plan.mode.value.upper()}] {name}: {plan.reason}")
+    if plan.mode is UpdateMode.UP_TO_DATE:
+        return UpdateOutcome(plan.mode, plan.reason, None, 0, time.perf_counter() - started)
+
+    mode, reason = plan.mode, plan.reason
+    resume = (
+        read_resume_state(checkpoint.run_dir, checkpoint.last_date)
+        if plan.mode is UpdateMode.RESUME and checkpoint is not None
+        else None
+    )
+    try:
+        run_dir = _run_engine(cfg, fred_client, data_last, resume)
+    except HistoryRevisedError as exc:
+        mode = UpdateMode.FULL
+        reason = f"history revised in {cfg.data_path.name} ({exc}) -> full rerun"
+        resume = None
+        echo(f"[{mode.value.upper()}] {name}: {reason}")
+        run_dir = _run_engine(cfg, fred_client, data_last, None)
+
+    since = checkpoint.last_date if resume is not None and checkpoint is not None else None
+    new_dates = dates[dates > since] if since is not None else dates
+    _stamp_update(
+        run_dir,
+        {
+            "mode": mode.value,
+            "reason": reason,
+            "checkpoint": checkpoint.run_dir.name if since is not None and checkpoint else None,
+            "dates_added": len(new_dates),
+            "first_new_date": f"{new_dates.min():%Y-%m-%d}" if len(new_dates) else None,
+        },
+    )
+    if build_report:
+        # Lazy import: the report stack pulls plotly and is only needed here.
+        from roro.report import build_report as build_report_html  # noqa: PLC0415
+
+        echo("building report.html ...")
+        build_report_html(run_dir, cfg.data_path, run_dir / "report.html")
+    elapsed = time.perf_counter() - started
+    echo(f"[ok] {run_dir} ({len(new_dates)} new dates, {elapsed:.0f}s)")
+    return UpdateOutcome(mode, reason, run_dir, len(new_dates), elapsed)
+
+
+def _data_dates(data_path: Path, data_until: pd.Timestamp | None) -> pd.DatetimeIndex:
+    prices = load_prices(data_path)
+    if data_until is not None:
+        prices = cut_prices(prices, data_until)
+    dates = pd.DatetimeIndex(prices.equity_lc.index)
+    if dates.empty:
+        raise ValueError(f"no data in {data_path} on or before {data_until}")
+    return dates
+
+
+def _json_config(cfg: EngineConfig) -> dict[str, Any]:
+    """Config as snapshot.json stores it (JSON round trip), for like-for-like comparison."""
+    loaded: dict[str, Any] = json.loads(json.dumps(config_to_dict(cfg), default=str))
+    return loaded
+
+
+def _run_engine(
+    cfg: EngineConfig,
+    fred_client: FredClient,
+    data_last: pd.Timestamp,
+    resume: ResumeState | None,
+) -> Path:
+    """One engine run into cfg.output_dir/results_<data_last>/ (atomic tmp + rename)."""
+    stamp = f"{data_last:%Y-%m-%d}"
+    engine_run(
+        cfg,
+        fred_client=fred_client,
+        run_date=f"results_{stamp}",
+        as_of_data_date=stamp,
+        force=True,  # a same-named folder without snapshot.json is not a valid checkpoint
+        data_until=stamp,
+        resume=resume,
+    )
+    return cfg.output_dir / f"results_{stamp}"
+
+
+def _stamp_update(run_dir: Path, info: dict[str, Any]) -> None:
+    """Record how this folder was produced in snapshot.json["update"]."""
+    path = run_dir / "snapshot.json"
+    snapshot = json.loads(path.read_text(encoding="utf-8"))
+    snapshot["update"] = info
+    path.write_text(json.dumps(snapshot, indent=2, default=str), encoding="utf-8")
