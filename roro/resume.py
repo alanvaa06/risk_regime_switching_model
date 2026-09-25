@@ -63,28 +63,49 @@ BETA_TOLERANCE: float = 1e-12
 _BETA_KEYS: list[str] = ["date", "segment", "scheme"]
 
 
+def _normalize_beta_keys(frame: pd.DataFrame) -> pd.DataFrame:
+    """Coerce key columns to a common dtype so index comparisons never fail on dtype alone."""
+    out = frame.copy()
+    out["date"] = pd.to_datetime(out["date"]).astype("datetime64[ns]")
+    out["segment"] = out["segment"].astype(str)
+    out["scheme"] = out["scheme"].astype(str)
+    return out
+
+
 def verify_beta_history(
     current: pd.DataFrame, checkpoint: pd.DataFrame, *, through: pd.Timestamp
 ) -> None:
     """Raise HistoryRevisedError unless current betas up to ``through`` equal the checkpoint's.
 
     Both frames are long beta_series layout. Same (date, segment, scheme) rows,
-    |diff| <= BETA_TOLERANCE, NaN == NaN.
+    |diff| <= BETA_TOLERANCE, NaN == NaN, inf == inf.
     """
+    cur_df = _normalize_beta_keys(current)
+    old_df = _normalize_beta_keys(checkpoint)
     cur = (
-        current.loc[current["date"] <= through]
+        cur_df.loc[cur_df["date"] <= through]
         .set_index(_BETA_KEYS)["beta"]
         .astype(float)
         .sort_index()
     )
-    old = checkpoint.set_index(_BETA_KEYS)["beta"].astype(float).sort_index()
+    old = (
+        old_df.loc[old_df["date"] <= through]
+        .set_index(_BETA_KEYS)["beta"]
+        .astype(float)
+        .sort_index()
+    )
     if not cur.index.equals(old.index):
-        first = cur.index.symmetric_difference(old.index)[0]
+        diff = cur.index.symmetric_difference(old.index)
+        if len(diff) > 0:
+            first = diff[0]
+            raise HistoryRevisedError(
+                f"date/segment rows differ from checkpoint (first: "
+                f"{pd.Timestamp(first[0]).date()} {first[1]} {first[2]})"
+            )
         raise HistoryRevisedError(
-            f"date/segment rows differ from checkpoint (first: "
-            f"{pd.Timestamp(first[0]).date()} {first[1]} {first[2]})"
+            "date/segment rows differ from checkpoint (duplicate or reordered keys)"
         )
-    same = ((cur - old).abs() <= BETA_TOLERANCE) | (cur.isna() & old.isna())
+    same = ((cur - old).abs() <= BETA_TOLERANCE) | (cur == old) | (cur.isna() & old.isna())
     if not bool(same.all()):
         d, seg, scheme = same.index[~same.to_numpy()][0]
         raise HistoryRevisedError(f"beta changed on {pd.Timestamp(d).date()} {seg} {scheme}")

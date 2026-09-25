@@ -135,6 +135,56 @@ def test_verify_beta_history_flags_missing_date() -> None:
         verify_beta_history(new, old, through=pd.Timestamp("2021-01-05"))
 
 
+def test_verify_beta_history_accepts_dtype_variation() -> None:
+    old = _long([0.1, 0.2, 0.3])
+    old["date"] = old["date"].astype("datetime64[us]")
+    old["segment"] = old["segment"].astype("category")
+    new = _long([0.1, 0.2, 0.3])
+    verify_beta_history(new, old, through=pd.Timestamp("2021-01-05"))
+
+
+def test_verify_beta_history_duplicate_keys_raises_not_indexerror() -> None:
+    old = _long([0.1, 0.2, 0.3])
+    new = pd.concat([old, old.iloc[[0]]], ignore_index=True)  # same key set, one duplicated
+    with pytest.raises(HistoryRevisedError, match="duplicate or reordered"):
+        verify_beta_history(new, old, through=pd.Timestamp("2021-01-05"))
+
+
+def test_verify_beta_history_ignores_checkpoint_rows_beyond_through() -> None:
+    old = _long([0.1, 0.2, 0.3, 0.4])  # checkpoint has a row past `through`
+    new = _long([0.1, 0.2, 0.3])
+    verify_beta_history(new, old, through=pd.Timestamp("2021-01-05"))
+
+
+def test_verify_beta_history_accepts_equal_inf() -> None:
+    old = _long([0.1, float("inf"), 0.3])
+    new = _long([0.1, float("inf"), 0.3])
+    verify_beta_history(new, old, through=pd.Timestamp("2021-01-05"))
+
+
+def test_cold_start_unexpected_value_raises(tmp_path: Path) -> None:
+    idx = pd.bdate_range("2021-01-01", periods=3)
+    rows = pd.DataFrame(
+        {
+            "date": idx,
+            "segment": "global",
+            "state": 1.0,
+            "label": "Risk-on",
+            "p_risk_off": 0.1,
+            "p_transitional": 0.2,
+            "p_risk_on": 0.7,
+            "confidence": 0.7,
+            "cold_start": ["False", "maybe", "False"],
+            "thin_cut": False,
+        }
+    )
+    rows.to_csv(tmp_path / "regimes_hmm.csv", index=False)
+    beta = pd.DataFrame({"date": idx, "segment": "global", "scheme": "cap_wtd", "beta": 0.1})
+    beta.to_csv(tmp_path / "beta_series.csv", index=False)
+    with pytest.raises(ValueError, match="maybe"):
+        read_resume_state(tmp_path, idx[-1])
+
+
 def test_cut_prices(tiny_xlsx: Path) -> None:
     cut = cut_prices(load_prices(tiny_xlsx), pd.Timestamp("2023-06-30"))
     assert cut.equity_lc.index.max() == pd.Timestamp("2023-06-30")

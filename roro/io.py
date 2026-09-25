@@ -110,8 +110,12 @@ def beta_long(bbs: BetaBySegment) -> pd.DataFrame:
 
 def read_resume_state(run_dir: Path, last_date: pd.Timestamp) -> ResumeState:
     """Everything a RESUME run needs from a checkpoint folder (exact float round trip)."""
+    beta_path = run_dir / "beta_series.csv"
     beta = pd.read_csv(
-        run_dir / "beta_series.csv", parse_dates=["date"], float_precision="round_trip"
+        beta_path,
+        parse_dates=["date"],
+        float_precision="round_trip",
+        dtype={"segment": str, "scheme": str},
     )
     return ResumeState(
         checkpoint_date=last_date,
@@ -125,14 +129,30 @@ def read_resume_state(run_dir: Path, last_date: pd.Timestamp) -> ResumeState:
     )
 
 
+def _read_cold_start(col: pd.Series, *, source: Path) -> pd.Series:
+    """Map True/False/"True"/"False" -> bool, NaN -> True (cold by default); else raise."""
+    mapped = col.map({True: True, False: False, "True": True, "False": False})
+    mapped = mapped.mask(col.isna(), True)
+    unmapped = mapped.isna()
+    if bool(unmapped.any()):
+        bad = col.loc[unmapped].iloc[0]
+        raise ValueError(f"{source}: unexpected cold_start value {bad!r}")
+    return mapped.astype(bool)
+
+
 def _read_overlay_prior(
     rows_path: Path, log_path: Path, last_date: pd.Timestamp
 ) -> dict[str, SegmentPrior] | None:
     if not rows_path.exists():
         return None
-    rows = pd.read_csv(rows_path, parse_dates=["date"], float_precision="round_trip")
+    rows = pd.read_csv(
+        rows_path,
+        parse_dates=["date"],
+        float_precision="round_trip",
+        dtype={"segment": str},
+    )
     log = (
-        pd.read_csv(log_path, parse_dates=["refit_date"])
+        pd.read_csv(log_path, parse_dates=["refit_date"], dtype={"segment": str})
         if log_path.exists()
         else pd.DataFrame(columns=["segment", "refit_date"])
     )
@@ -141,15 +161,11 @@ def _read_overlay_prior(
     for seg in sorted(segment_str.unique()):
         g = rows.loc[segment_str == seg].set_index("date").sort_index()
         refits = log.loc[log["segment"].astype(str) == seg, "refit_date"]
-        cold_start = (
-            g["cold_start"]
-            .map({True: True, False: False, "True": True, "False": False})
-            .astype(bool)
-        )
+        cold_start = _read_cold_start(g["cold_start"], source=rows_path)
         out[seg] = SegmentPrior(
             probs=g[_PROB_COLUMNS],
             cold_start=cold_start,
-            refit_dates=tuple(pd.Timestamp(d) for d in refits),
+            refit_dates=tuple(sorted(pd.Timestamp(d) for d in refits)),
             last_date=last_date,
         )
     return out
