@@ -77,7 +77,8 @@ def run_backtest(
     Writes ``acceptance_report.json``, ``event_recognition.csv``,
     ``validation_corr_history.csv``, and ``stability_metrics.csv`` to
     ``cfg.output_dir``. When HMM is enabled also writes
-    ``acceptance_report_hmm.json`` and ``acceptance_compare.json``.
+    ``acceptance_report_hmm.json`` and ``acceptance_compare.json``. The replayed
+    engine run itself lands in ``cfg.output_dir/run/``.
     Returns the in-memory percentile report dict.
     """
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
@@ -87,6 +88,7 @@ def run_backtest(
         run_date=end,
         as_of_data_date=end,
         force=True,
+        run_name="run",
     )
     gates = _evaluate_gates(
         result,

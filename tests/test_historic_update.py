@@ -56,7 +56,7 @@ def _update(cfg: Path, root: Path, type_run: TypeRun,
             log: list[str] | None = None) -> UpdateOutcome:
     echo = log.append if log is not None else (lambda _m: None)
     return run_update(cfg, type_run=type_run, data_until=until, build_report=report,
-                      fred_client=_fred(), historic_root=root, echo=echo)
+                      fred_client=_fred(), outputs_root=root, echo=echo)
 
 
 def _snapshot(run_dir: Path) -> dict[str, Any]:
@@ -77,7 +77,7 @@ def test_resume_equals_full_rerun(rw_xlsx: Path, tmp_path: Path,
     cfg = _config(tmp_path, rw_xlsx)
     first = _update(cfg, tmp_path / "a", TypeRun.ALL, until=T0)
     assert first.mode is UpdateMode.FULL
-    assert first.run_dir is not None and first.run_dir.name == "results_2023-06-15"
+    assert first.run_dir == tmp_path / "a" / "2023-06-15" / "historic" / "cfg"
 
     calls = {"n": 0}
     real = jump_model.fit_jump_model
@@ -95,25 +95,26 @@ def test_resume_equals_full_rerun(rw_xlsx: Path, tmp_path: Path,
 
     assert resumed.mode is UpdateMode.RESUME
     assert resumed.run_dir is not None and full.run_dir is not None
-    assert resumed.run_dir.name == full.run_dir.name == "results_2024-12-31"
+    assert resumed.run_dir == tmp_path / "a" / "2024-12-31" / "historic" / "cfg"
+    assert full.run_dir == tmp_path / "b" / "2024-12-31" / "historic" / "cfg"
     _assert_same_csvs(resumed.run_dir, full.run_dir)
     assert resume_fits < full_fits  # the resume really skipped closed blocks
     assert resumed.dates_added == int((RW_DATES > T0).sum())
 
     update = _snapshot(resumed.run_dir)["update"]
     assert update["mode"] == "resume"
-    assert update["checkpoint"] == "results_2023-06-15"
+    assert update["checkpoint"] == "2023-06-15"
     assert update["dates_added"] == resumed.dates_added
 
 
 def test_up_to_date_writes_nothing(rw_xlsx: Path, tmp_path: Path) -> None:
     cfg = _config(tmp_path, rw_xlsx)
     _update(cfg, tmp_path / "a", TypeRun.ALL)
-    before = sorted(p.name for p in (tmp_path / "a" / "cfg").iterdir())
+    before = sorted(p.relative_to(tmp_path) for p in (tmp_path / "a").rglob("*"))
     again = _update(cfg, tmp_path / "a", TypeRun.NEW_DATA)
     assert again.mode is UpdateMode.UP_TO_DATE
-    assert again.run_dir == tmp_path / "a" / "cfg" / "results_2024-12-31"
-    assert sorted(p.name for p in (tmp_path / "a" / "cfg").iterdir()) == before
+    assert again.run_dir == tmp_path / "a" / "2024-12-31" / "historic" / "cfg"
+    assert sorted(p.relative_to(tmp_path) for p in (tmp_path / "a").rglob("*")) == before
 
 
 def test_config_change_forces_full(rw_xlsx: Path, tmp_path: Path) -> None:
@@ -133,7 +134,7 @@ def test_config_change_warns_before_overwriting_same_date(rw_xlsx: Path,
     out = _update(_config(tmp_path, rw_xlsx, jm=False, penalty=30.0), root,
                   TypeRun.NEW_DATA, log=log)
     assert out.mode is UpdateMode.FULL
-    assert "[warn] overwriting existing results_2024-12-31" in log
+    assert "[warn] overwriting existing 2024-12-31/historic/cfg" in log
 
 
 def test_restated_last_row_still_resumes(rw_xlsx: Path, tmp_path: Path) -> None:
@@ -177,7 +178,7 @@ def test_revised_history_falls_back_to_full(rw_xlsx: Path, tmp_path: Path) -> No
     update = _snapshot(out.run_dir)["update"]
     assert update["mode"] == "full"
     assert update["checkpoint"] is None
-    assert update["checkpoint_rejected"] == "results_2023-06-15"
+    assert update["checkpoint_rejected"] == "2023-06-15"
 
 
 def test_missing_report_is_rebuilt_and_failure_is_reported(
@@ -188,7 +189,7 @@ def test_missing_report_is_rebuilt_and_failure_is_reported(
     log: list[str] = []
     first = _update(cfg, root, TypeRun.NEW_DATA, until=T0, log=log)
     assert first.mode is UpdateMode.FULL and first.run_dir is not None
-    assert f"no checkpoint yet in {(root / 'cfg').resolve()}" in log[0]
+    assert f"no checkpoint yet under {root.resolve()}" in log[0]
     assert f"[ok] {first.run_dir.resolve()} (" in log[-1]
     assert "dates processed" in log[-1]
 
@@ -234,7 +235,7 @@ def test_resume_warns_when_code_changed(
     log: list[str] = []
     out = _update(cfg, tmp_path / "h", TypeRun.NEW_DATA, log=log)
     assert out.mode is UpdateMode.RESUME
-    assert ("[warn] code changed since results_2023-06-15 (aaaaaaa -> bbbbbbb); "
+    assert ("[warn] code changed since 2023-06-15 (aaaaaaa -> bbbbbbb); "
             "if regime math changed, rerun with type_run='all' (or --full)") in log
     assert "new dates" in log[-1]
 
@@ -247,20 +248,20 @@ def test_unreadable_checkpoint_falls_back_to_full(rw_xlsx: Path, tmp_path: Path)
     log: list[str] = []
     out = _update(cfg, tmp_path / "h", TypeRun.NEW_DATA, log=log)
     assert out.mode is UpdateMode.FULL
-    assert out.reason.startswith("checkpoint results_2023-06-15 unreadable (")
+    assert out.reason.startswith("checkpoint 2023-06-15 unreadable (")
     assert out.reason.endswith(") -> full rerun")
-    assert any(m.startswith("[FULL] cfg: checkpoint results_2023-06-15 unreadable") for m in log)
+    assert any(m.startswith("[FULL] cfg: checkpoint 2023-06-15 unreadable") for m in log)
     assert out.run_dir is not None
     update = _snapshot(out.run_dir)["update"]
     assert update["checkpoint"] is None
-    assert update["checkpoint_rejected"] == "results_2023-06-15"
+    assert update["checkpoint_rejected"] == "2023-06-15"
 
 
 def test_real_report_builds_in_historic_folder(rw_xlsx: Path, tmp_path: Path) -> None:
     # No stubs: the report must parse the snapshot a historic run writes.
     cfg = _config(tmp_path, rw_xlsx, jm=False)
     out = _update(cfg, tmp_path / "a", TypeRun.ALL, until=T0, report=True)
-    assert out.run_dir is not None and out.run_dir.name == "results_2023-06-15"
+    assert out.run_dir == tmp_path / "a" / "2023-06-15" / "historic" / "cfg"
     assert (out.run_dir / "report.html").stat().st_size > 0
     snap = _snapshot(out.run_dir)
     pd.Timestamp(snap["run_date"])  # a real date, not the folder name

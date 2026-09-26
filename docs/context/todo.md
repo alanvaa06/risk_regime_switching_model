@@ -25,7 +25,7 @@ Spec: `docs/superpowers/specs/2026-06-03-roro-hmm-regime-design.md`
 
 ### HMM outcome (2026-06-03)
 - Built + verified end-to-end (24 commits). Default `hmm_enabled=False` (overlay).
-- §8 decision: **percentile stays production default** — HMM passed no gate on real data, regressed G3 (events 6/8 vs 7/8), but halved G5 flicker (9 vs 18). Evidence: `outputs/hmm_eval/acceptance_compare.json`.
+- §8 decision: **percentile stays production default** — HMM passed no gate on real data, regressed G3 (events 6/8 vs 7/8), but halved G5 flicker (9 vs 18). Evidence: `outputs/2026-05-26/backtest/hmm_eval/acceptance_compare.json`.
 - Follow-up: percentile baseline also fails 5/6 gates on 2008–2026 — gate/param calibration gap to revisit.
 
 ## Gate-Diagnostics (2026-06-09) — DONE
@@ -76,3 +76,10 @@ Spec: `docs/superpowers/specs/2026-09-25-incremental-historic-runs-design.md` ·
 - [x] I11 — README + context docs
 - [x] I12 — full suite + real-data bench (jm-eval FULL vs RESUME timing + byte compare)
 - [ ] Follow-up (optional): data.xlsx is parsed ~8x per update (historic dates + engine + report); read only the date column in `_data_dates` if refresh time matters.
+
+## Date-first output layout (2026-09-26) — DONE
+Layout: `outputs/<data-date>/<kind>/<config>/` with kind in historic | run | backtest | gate_diag.
+- [x] L1 — `roro/layout.py` (`OutputKind`, `output_dir`) + historic `find_checkpoint` scans `outputs/*/historic/<config>/`
+- [x] L2 — CLI `run` / `backtest` / `gate-diagnostics` / `update` write into the layout; configs `output_dir: outputs`
+- [x] L3 — tests + README + run_roro.py docstring
+- [x] L4 — move existing outputs (historic, hmm_eval, gate_diag) into the layout; verify jm-eval resumes

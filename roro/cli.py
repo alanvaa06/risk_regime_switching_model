@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ from dotenv import load_dotenv
 from roro.config import load_config
 from roro.engine import run as engine_run
 from roro.fred_client import FredApiClient, FredClient
+from roro.layout import DEFAULT_OUTPUTS_ROOT, OutputKind, output_dir
 
 load_dotenv()
 
@@ -39,7 +41,13 @@ def main() -> None:
 @click.option("--date", "run_date", required=True)
 @click.option("--as-of-data-date", required=True)
 @click.option("--ewma-halflife", type=int, default=None)
-@click.option("--out", "out_dir", type=click.Path(path_type=Path), default=None)
+@click.option(
+    "--out",
+    "out_dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Outputs root (default: the config's output_dir).",
+)
 @click.option("--fred-key", default=None, help="Defaults to FRED_API_KEY env.")
 @click.option("--force", is_flag=True)
 def cmd_run(
@@ -54,19 +62,21 @@ def cmd_run(
     overrides: dict[str, Any] = {}
     if ewma_halflife is not None:
         overrides["ewma_halflife_days"] = ewma_halflife
-    if out_dir is not None:
-        overrides["output_dir"] = out_dir
     cfg = load_config(config_path, overrides=overrides)
+    target = output_dir(
+        out_dir or cfg.output_dir, as_of_data_date, OutputKind.RUN, config_path.stem
+    )
     api_key = fred_key or os.environ.get("FRED_API_KEY", "")
     client = _build_fred_client(api_key)
     engine_run(
-        cfg,
+        replace(cfg, output_dir=target.parent),
         fred_client=client,
         run_date=run_date,
         as_of_data_date=as_of_data_date,
         force=force,
+        run_name=target.name,
     )
-    click.echo(f"OK: {cfg.output_dir / run_date}")
+    click.echo(f"OK: {target}")
 
 
 @main.command("backtest")
@@ -84,14 +94,17 @@ def cmd_backtest(config_path: Path, start: str, end: str, assert_gates: bool) ->
     from roro.backtest import run_backtest  # noqa: PLC0415
 
     cfg = load_config(config_path)
+    target = output_dir(cfg.output_dir, end, OutputKind.BACKTEST, config_path.stem)
     api_key = os.environ.get("FRED_API_KEY", "")
     client = _build_fred_client(api_key)
-    report = run_backtest(cfg, fred_client=client, start=start, end=end)
+    report = run_backtest(
+        replace(cfg, output_dir=target), fred_client=client, start=start, end=end
+    )
     if assert_gates and not report["all_passed"]:
         raise click.ClickException(
-            "Acceptance gates failed; see backtest/acceptance_report.json"
+            f"Acceptance gates failed; see {target / 'acceptance_report.json'}"
         )
-    click.echo("OK")
+    click.echo(f"OK: {target}")
 
 
 @main.command("gate-diagnostics")
@@ -110,7 +123,13 @@ def cmd_backtest(config_path: Path, start: str, end: str, assert_gates: bool) ->
     default=None,
     help="acceptance_compare.json to pin the baseline against.",
 )
-@click.option("--out", "out_dir", type=click.Path(path_type=Path), default=None)
+@click.option(
+    "--out",
+    "out_dir",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Folder for the diagnostics files (default: <output_dir>/<end>/gate_diag/<config>).",
+)
 @click.option("--fred-key", default=None, help="Defaults to FRED_API_KEY env.")
 def cmd_gate_diagnostics(
     config_path: Path,
@@ -125,13 +144,13 @@ def cmd_gate_diagnostics(
     from roro.gate_diagnostics import diagnose, write_diagnostics  # noqa: PLC0415
 
     cfg = load_config(config_path)
+    target = out_dir or output_dir(cfg.output_dir, end, OutputKind.GATE_DIAG, config_path.stem)
     api_key = fred_key or os.environ.get("FRED_API_KEY", "")
     client = _build_fred_client(api_key)
     # Re-run the engine for a fresh causal RunResult (returns are not persisted).
-    result = engine_run(cfg, fred_client=client, run_date=end,
-                        as_of_data_date=end, force=True)
+    result = engine_run(replace(cfg, output_dir=target), fred_client=client, run_date=end,
+                        as_of_data_date=end, force=True, run_name="run")
     diag = diagnose(result, start=start, end=end, baseline_compare_path=baseline_path)
-    target = out_dir or (cfg.output_dir / "gate_diagnostics")
     write_diagnostics(target, diag)
     click.echo(f"OK: {target}")
 
@@ -210,13 +229,11 @@ def cmd_report(
 @click.option("--no-report", is_flag=True, help="Skip building report.html.")
 @click.option("--fred-key", default=None, help="Defaults to FRED_API_KEY env.")
 @click.option(
-    "--historic-root",
+    "--outputs-root",
     type=click.Path(file_okay=False, path_type=Path),
-    # Duplicates roro.historic.DEFAULT_HISTORIC_ROOT on purpose: that module is
-    # imported lazily inside cmd_update to keep `roro --help` fast.
-    default=Path("outputs") / "historic",
+    default=DEFAULT_OUTPUTS_ROOT,
     show_default=True,
-    help="Folder holding one subfolder per config (relative to the current directory).",
+    help="Outputs root; results go to <root>/<data date>/historic/<config>/.",
 )
 def cmd_update(
     config_path: Path,
@@ -224,9 +241,9 @@ def cmd_update(
     data_until: str | None,
     no_report: bool,
     fred_key: str | None,
-    historic_root: Path,
+    outputs_root: Path,
 ) -> None:
-    """Process only dates not yet in outputs/historic/<config>/ (or everything with --full)."""
+    """Process only dates not yet in outputs/<date>/historic/<config>/ (or all with --full)."""
     # Lazy import: historic pulls the engine; keeps `roro --help` fast.
     from roro.historic import (  # noqa: PLC0415
         TypeRun,
@@ -247,7 +264,7 @@ def cmd_update(
             data_until=until,
             build_report=not no_report,
             fred_client=client,
-            historic_root=historic_root,
+            outputs_root=outputs_root,
             echo=click.echo,
         )
     except Exception as exc:

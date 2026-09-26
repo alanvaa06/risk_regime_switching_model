@@ -1,10 +1,10 @@
 # RoRo evaluation configuration — reproduces the 2008-2026 HMM eval that
-# produced outputs/hmm_eval/. Used by `roro gate-diagnostics` to regenerate the
+# produced outputs/2026-05-26/backtest/hmm_eval/. Used by `roro gate-diagnostics` to regenerate the
 # gate evidence base self-consistently (percentile + HMM) and pin the baseline.
-# Mirrors outputs/hmm_eval/2026-05-26/snapshot.json config_resolved.
+# Mirrors outputs/2026-05-26/backtest/hmm_eval/run/snapshot.json config_resolved.
 
 data_path: data.xlsx
-output_dir: outputs/gate_diag_run
+output_dir: outputs
 
 # Return + vol estimators
 ewma_halflife_days: 30

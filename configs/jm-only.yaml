@@ -3,7 +3,7 @@
 # so the report renders the JM regime bands + JM state-probability figure on real data.
 
 data_path: data.xlsx
-output_dir: outputs/jm_only
+output_dir: outputs
 
 ewma_halflife_days: 30
 return_window_days: 63

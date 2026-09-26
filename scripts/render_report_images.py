@@ -6,7 +6,7 @@ Windows setups; this script renders reliably on Linux / CI.
 
 Usage:
     uv pip install kaleido
-    uv run python scripts/render_report_images.py --run-dir outputs/2026-05-27
+    uv run python scripts/render_report_images.py --run-dir outputs/2026-05-26/run/default
 """
 
 from __future__ import annotations

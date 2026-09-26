@@ -242,7 +242,7 @@ Attribution is **on by default** (`attribution_enabled: true`) and is **additive
             † regime attribution, on by default; adds artifacts only (§5.5)
         │
         ▼
-   roro.io.write_run   →  outputs/<run-date>/*.csv  +  snapshot.json
+   roro.io.write_run   →  outputs/<data-date>/<kind>/<config>/*.csv  +  snapshot.json
         │
         ▼
    roro.report.build_report  →  report.html   (interactive Plotly)
@@ -399,16 +399,16 @@ roro run --config configs/jm-only.yaml --date 2026-05-27 --as-of-data-date 2026-
 roro run --config configs/jm-eval.yaml --date 2026-05-27 --as-of-data-date 2026-05-26
 ```
 
-Each produces `outputs/<run-date>/` (see §11). The run emits `regimes.csv` always, plus `regimes_hmm.csv` / `regimes_jm.csv` (and their refit logs) for whichever overlays are enabled.
+Each produces `outputs/<as-of-data-date>/run/<config-name>/`, e.g. `outputs/2026-05-26/run/jm-eval/` (see §11). The run emits `regimes.csv` always, plus `regimes_hmm.csv` / `regimes_jm.csv` (and their refit logs) for whichever overlays are enabled.
 
 > **Tuning the overlays** *(optional — the defaults are sensible)*: HMM — `hmm_refit_interval_days` (21), `hmm_min_history_days` (252), `hmm_switching_variance` (true). JM — `jm_jump_penalty` (50.0; the persistence knob — higher = fewer regime switches), `jm_refit_interval_days` (21), `jm_window` (`expanding` or `rolling`), `jm_random_seed` (0; determinism), `jm_continuous` (false → hard one-hot bands; true → soft simplex probabilities). See `configs/jm-eval.yaml` for a fully-populated example.
 
 ### Incremental historic runs (recommended for refreshes)
 
-`roro update` keeps one folder per config under `outputs/historic/` and, when `data.xlsx` gains new dates, computes only what is new:
+`roro update` keeps one folder per config and data date under `outputs/<date>/historic/` and, when `data.xlsx` gains new dates, computes only what is new:
 
 ```bash
-# Process only dates not yet in outputs/historic/jm-eval/
+# Process only dates not yet in outputs/<date>/historic/jm-eval/
 roro update --config configs/jm-eval.yaml
 
 # Rebuild the full history from scratch
@@ -417,13 +417,13 @@ roro update --config configs/jm-eval.yaml --full
 # Process data only up to a date; skip the HTML report
 roro update --config configs/jm-eval.yaml --data-until 25-09-2026 --no-report
 
-# Keep the results somewhere other than outputs/historic/
-roro update --config configs/jm-eval.yaml --historic-root D:/roro-history
+# Keep the results somewhere other than outputs/
+roro update --config configs/jm-eval.yaml --outputs-root D:/roro-history
 ```
 
 To experiment with parameters, copy the config to a new file name (e.g. `configs/jm-eval-test.yaml`) so its results get their own folder instead of overwriting.
 
-Layout: `outputs/historic/<config-name>/results_<last-data-date>/` holds the **complete** history (all CSVs + `snapshot.json` + `report.html`). Older folders are kept; each results folder is ~50 MB of CSV plus ~55 MB report.html; archive old ones by hand.
+Layout: `outputs/<last-data-date>/historic/<config-name>/` holds the **complete** history (all CSVs + `snapshot.json` + `report.html`). Older folders are kept; each results folder is ~50 MB of CSV plus ~55 MB report.html; archive old ones by hand.
 
 How it decides: `--full` → full run; no previous folder → full run; config changed since the last folder → full run; no new dates → nothing recomputed (a missing report.html is rebuilt); otherwise **resume**. Resume recomputes the fast stages on the full data (about 1 minute) and re-fits only the last open HMM/JM refit block instead of the whole 2008→today walk-forward — the result is byte-identical to a full rerun. If old prices in `data.xlsx` were revised where the resume reuses results, the run detects it and falls back to a full run automatically; a restated last row (provisional close) normally does not force one (only when that row closed a refit block). `snapshot.json["update"]` records which path ran and why.
 
@@ -445,7 +445,7 @@ Attribution (§5.8) is **on by default** and adds artifacts only — it never ch
 ### Build the report
 
 ```bash
-roro report --run-dir outputs/2026-05-27 --window 252 --out outputs/2026-05-27/report.html
+roro report --run-dir outputs/2026-05-26/run/default --window 252 --out outputs/2026-05-26/run/default/report.html
 ```
 
 `--xlsx` defaults to the `data_path` recorded in the run's `snapshot.json`. The report renders whatever classifiers the run produced: the segment-β chart gets a **band-source toggle (Percentile ↔ HMM ↔ JM)** so you can switch the shaded regime bands between methods on the same slope line, and each enabled overlay adds its own **state-probability figure** (HMM filtered probabilities / JM state probabilities). Run config 3 above to see all three at once.
@@ -455,6 +455,8 @@ roro report --run-dir outputs/2026-05-27 --window 252 --out outputs/2026-05-27/r
 ```bash
 roro backtest --config configs/default.yaml --start 2010-01-01 --end 2024-12-31 --assert-gates
 ```
+
+Results go to `outputs/<end>/backtest/<config-name>/` (the replayed engine run in its `run/` subfolder); `roro gate-diagnostics` writes to `outputs/<end>/gate_diag/<config-name>/` unless `--out` is given.
 
 `--assert-gates` gates the **production (percentile)** method. When HMM and/or JM are enabled in the config, the backtest also writes `acceptance_report_hmm.json` / `acceptance_report_jm.json` and a gate-by-gate `acceptance_compare.json` (`{percentile, hmm, jm}`) so you can see exactly where each method wins or loses.
 
@@ -470,7 +472,20 @@ uv run ruff check .
 
 ## 11. Output reference
 
-A run directory (`outputs/<run-date>/`) contains:
+Every command writes under one date-first tree; the date is the **last data date** the run covers (not the day it ran), so everything computed on the same data sits together:
+
+```
+outputs/
+  2026-05-26/
+    historic/<config>/     roro update / run_roro.bat (incremental checkpoints)
+    run/<config>/          roro run
+    backtest/<config>/     roro backtest (+ run/ = the replayed engine run)
+    gate_diag/<config>/    roro gate-diagnostics
+```
+
+`output_dir` in a config is the root (`outputs`); the date, kind and config-name folders are added by the command.
+
+A run directory (e.g. `outputs/2026-05-26/run/default/`) contains:
 
 | File | Contents |
 |---|---|

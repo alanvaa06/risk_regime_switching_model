@@ -3,7 +3,7 @@
 **Date:** 2026-06-09
 **Branch:** feat/jump-model
 **Author:** Alan Vazquez, CFA
-**Harness:** `roro gate-diagnostics` — `outputs/gate_diag/`
+**Harness:** `roro gate-diagnostics` — `outputs/2026-05-26/gate_diag/eval/`
 **Period:** 2008-12-31 → 2026-05-26
 
 ---
@@ -25,7 +25,7 @@
 | **G5** `stability` | max ≤ 2 | **18** | **9** | `real` | Discriminating — the one honest, binding method failure; HMM halved it |
 | **G6** `internal` | max ≤ 5 | pass | pass | `vacuous` | Shared — composite price unwired → "no DM mapping data"; auto-passes by absence of data |
 
-All values sourced from `outputs/gate_diag/gate_diagnostics.json`. Confirmed against `outputs/hmm_eval/acceptance_compare.json` (baseline pin verified — see §3).
+All values sourced from `outputs/2026-05-26/gate_diag/eval/gate_diagnostics.json`. Confirmed against `outputs/2026-05-26/backtest/hmm_eval/acceptance_compare.json` (baseline pin verified — see §3).
 
 ---
 
@@ -95,7 +95,7 @@ The frontier sweeps a causal hysteresis `confirm_days` knob over the percentile 
 | 21 | 6 | 2.0 |
 | 34 | 4 | 1.0 |
 
-*Source: `outputs/gate_diag/g3_g5_frontier.csv`. events_caught = in-range events (7 possible; 2008_lehman excluded).*
+*Source: `outputs/2026-05-26/gate_diag/eval/g3_g5_frontier.csv`. events_caught = in-range events (7 possible; 2008_lehman excluded).*
 
 ### Feasibility Conclusion
 
@@ -146,4 +146,4 @@ Rather than two separate G3 and G5 pass/fail gates, the frontier itself could be
 
 ---
 
-*Harness commit: see `docs/context/sesion-log.md`. Artifacts: `outputs/gate_diag/gate_diagnostics.json`, `outputs/gate_diag/g3_g5_frontier.csv`. Design: `docs/superpowers/specs/2026-06-08-gate-diagnostics-design.md`.*
+*Harness commit: see `docs/context/sesion-log.md`. Artifacts: `outputs/2026-05-26/gate_diag/eval/gate_diagnostics.json`, `outputs/2026-05-26/gate_diag/eval/g3_g5_frontier.csv`. Design: `docs/superpowers/specs/2026-06-08-gate-diagnostics-design.md`.*

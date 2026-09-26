@@ -4,7 +4,7 @@ How to use:
   1. Edit the PARAMETERS block below (Notepad is fine).
   2. Double-click run_roro.bat (runs this file with the project's .venv).
 
-Results land in outputs/historic/<CONFIG>/results_<last data date>/
+Results land in outputs/<last data date>/historic/<CONFIG>/
 (CSV files + report.html). With TYPE_RUN = "new_data" only dates not processed
 yet are computed; the folder still holds the complete history.
 """

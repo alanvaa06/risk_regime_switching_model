@@ -42,56 +42,60 @@ def test_available_configs_sorted_yaml_stems(tmp_path: Path) -> None:
     assert list(available_configs(tmp_path)) == ["a", "b"]
 
 
-def _mk(root: Path, name: str, *, snapshot: bool = True) -> Path:
-    d = root / name
+def _mk(root: Path, day: str, name: str = "cfg", *, snapshot: bool = True) -> Path:
+    d = root / day / "historic" / name
     d.mkdir(parents=True)
     if snapshot:
         (d / "snapshot.json").write_text(json.dumps({"config_resolved": {}}), encoding="utf-8")
     return d
 
 
-def test_find_checkpoint_newest_by_name_date(tmp_path: Path) -> None:
-    older = _mk(tmp_path, "results_2026-09-18")
-    newest = _mk(tmp_path, "results_2026-09-25")
-    _mk(tmp_path, "results_2026-10-01.tmp")               # interrupted write
-    _mk(tmp_path, "results_2026-10-02", snapshot=False)   # incomplete folder
-    _mk(tmp_path, "results_2026-10-03.old")               # write_run's rename-aside leftover
-    _mk(tmp_path, "scratch")
+def test_find_checkpoint_newest_by_date_folder(tmp_path: Path) -> None:
+    older = _mk(tmp_path, "2026-09-18")
+    newest = _mk(tmp_path, "2026-09-25")
+    _mk(tmp_path, "2026-10-01", "cfg.tmp")               # interrupted write
+    _mk(tmp_path, "2026-10-02", snapshot=False)          # incomplete folder
+    _mk(tmp_path, "2026-10-03", "cfg.old")               # write_run's rename-aside leftover
+    _mk(tmp_path, "2026-10-04", "other")                 # another config
+    (tmp_path / "2026-10-05" / "run" / "cfg").mkdir(parents=True)  # not a historic run
+    (tmp_path / "2026-10-05" / "run" / "cfg" / "snapshot.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "scratch").mkdir()
     (older / "touched.txt").write_text("x", encoding="utf-8")  # newer mtime must not matter
-    cp = find_checkpoint(tmp_path)
+    cp = find_checkpoint(tmp_path, "cfg")
     assert cp is not None
     assert cp.run_dir == newest
     assert cp.last_date == pd.Timestamp("2026-09-25")
+    assert cp.label == "2026-09-25"
     assert cp.snapshot == {"config_resolved": {}}
 
 
 def test_find_checkpoint_missing_or_empty(tmp_path: Path) -> None:
-    assert find_checkpoint(tmp_path / "nope") is None
-    assert find_checkpoint(tmp_path) is None
+    assert find_checkpoint(tmp_path / "nope", "cfg") is None
+    assert find_checkpoint(tmp_path, "cfg") is None
 
 
 def test_find_checkpoint_skips_calendar_invalid_date(tmp_path: Path) -> None:
-    valid = _mk(tmp_path, "results_2026-09-18")
-    _mk(tmp_path, "results_2026-13-45")  # matches the regex but is not a real date
-    cp = find_checkpoint(tmp_path)
+    valid = _mk(tmp_path, "2026-09-18")
+    _mk(tmp_path, "2026-13-45")  # matches the regex but is not a real date
+    cp = find_checkpoint(tmp_path, "cfg")
     assert cp is not None
     assert cp.run_dir == valid
 
 
 @pytest.mark.parametrize("garbage", ["{not json", "[1, 2]", ""])
 def test_find_checkpoint_skips_corrupt_snapshot(tmp_path: Path, garbage: str) -> None:
-    older = _mk(tmp_path, "results_2026-09-18")
-    newest = _mk(tmp_path, "results_2026-09-25")
+    older = _mk(tmp_path, "2026-09-18")
+    newest = _mk(tmp_path, "2026-09-25")
     (newest / "snapshot.json").write_text(garbage, encoding="utf-8")
-    cp = find_checkpoint(tmp_path)
+    cp = find_checkpoint(tmp_path, "cfg")
     assert cp is not None
     assert cp.run_dir == older
 
 
 def test_find_checkpoint_all_corrupt_is_none(tmp_path: Path) -> None:
-    only = _mk(tmp_path, "results_2026-09-18")
+    only = _mk(tmp_path, "2026-09-18")
     (only / "snapshot.json").write_text("{not json", encoding="utf-8")
-    assert find_checkpoint(tmp_path) is None
+    assert find_checkpoint(tmp_path, "cfg") is None
 
 
 def test_config_changes_ignores_paths_and_key() -> None:
@@ -105,7 +109,7 @@ _CFG: dict[str, Any] = {"jm_enabled": True, "methodology_version": "1.0.0"}
 
 def _cp(last: str = "2026-09-18", cfg: dict[str, Any] | None = None) -> Checkpoint:
     return Checkpoint(
-        run_dir=Path(f"results_{last}"),
+        run_dir=Path(last) / "historic" / "cfg",
         last_date=pd.Timestamp(last),
         snapshot={"config_resolved": _CFG if cfg is None else cfg},
     )
@@ -153,7 +157,7 @@ def test_plan_up_to_date_hints_when_data_until_is_earlier() -> None:
 def test_plan_resume() -> None:
     plan = _plan()
     assert plan.mode is UpdateMode.RESUME
-    assert "results_2026-09-18" in plan.reason
+    assert "resuming from 2026-09-18" in plan.reason
 
 
 def test_friendly_error_locked_file() -> None:
