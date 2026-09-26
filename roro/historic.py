@@ -1,7 +1,7 @@
 """Incremental historic runs: checkpoint discovery, run planning, orchestration.
 
-Layout: <historic_root>/<config-stem>/results_<YYYY-MM-DD>/, where the date is the
-last data date processed. A RESUME run copies closed HMM/JM refit blocks from the
+Layout: <outputs_root>/<YYYY-MM-DD>/historic/<config-stem>/, where the date is the
+last data date processed (see roro.layout). A RESUME run copies closed HMM/JM refit blocks from the
 newest checkpoint; everything else recomputes on the full data. Spec:
 docs/superpowers/specs/2026-09-25-incremental-historic-runs-design.md
 """
@@ -14,7 +14,7 @@ import re
 import time
 import urllib.error
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from enum import StrEnum
 from pathlib import Path
@@ -27,12 +27,10 @@ from roro.config import to_dict as config_to_dict
 from roro.engine import run as engine_run
 from roro.fred_client import FredClient
 from roro.io import code_version, cut_prices, load_prices, read_resume_state
+from roro.layout import DEFAULT_OUTPUTS_ROOT, OutputKind, output_dir
 from roro.resume import HistoryRevisedError
 from roro.types import ResumeState
 
-DEFAULT_HISTORIC_ROOT: Path = Path("outputs") / "historic"
-
-_RESULTS_DIR = re.compile(r"^results_(\d{4}-\d{2}-\d{2})$")
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _DMY_DATE = re.compile(r"^\d{2}-\d{2}-\d{4}$")
 #: Config keys that do not change results (paths, secrets): never force a FULL run.
@@ -59,6 +57,11 @@ class Checkpoint:
     run_dir: Path
     last_date: pd.Timestamp
     snapshot: dict[str, Any]
+
+    @property
+    def label(self) -> str:
+        """The checkpoint's data date, as its date folder is named."""
+        return f"{self.last_date:%Y-%m-%d}"
 
 
 @dataclass(frozen=True)
@@ -97,24 +100,24 @@ def available_configs(configs_dir: Path) -> dict[str, Path]:
     return {p.stem: p for p in sorted(configs_dir.glob("*.yaml"))}
 
 
-def find_checkpoint(historic_dir: Path) -> Checkpoint | None:
-    """Newest complete ``results_YYYY-MM-DD`` folder, by the date in its name.
+def find_checkpoint(outputs_root: Path, name: str) -> Checkpoint | None:
+    """Newest complete ``<YYYY-MM-DD>/historic/<name>`` folder, by its date folder.
 
-    Skips ``.tmp`` folders (interrupted writes), folders without a readable
-    snapshot.json (a JSON object), and folders whose date is calendar-invalid
-    (e.g. ``results_2026-13-45``); the next-newest valid folder is used instead.
+    Skips interrupted writes (``<name>.tmp``, never matched), folders without a
+    readable snapshot.json (a JSON object), and date folders that are
+    calendar-invalid (e.g. ``2026-13-45``); the next-newest valid folder is used.
     """
-    if not historic_dir.is_dir():
+    if not outputs_root.is_dir():
         return None
     found: list[tuple[pd.Timestamp, Path]] = []
-    for p in historic_dir.iterdir():
-        m = _RESULTS_DIR.match(p.name)
-        if m and p.is_dir() and (p / "snapshot.json").is_file():
+    for day in outputs_root.iterdir():
+        run_dir = day / OutputKind.HISTORIC.value / name
+        if _ISO_DATE.match(day.name) and (run_dir / "snapshot.json").is_file():
             try:
-                ts = pd.Timestamp(m.group(1))
+                ts = pd.Timestamp(day.name)
             except ValueError:
                 continue
-            found.append((ts, p))
+            found.append((ts, run_dir))
     for last_date, run_dir in sorted(found, reverse=True):
         try:
             snapshot = json.loads((run_dir / "snapshot.json").read_text(encoding="utf-8"))
@@ -152,14 +155,14 @@ def plan_update(
     if changed:
         return UpdatePlan(
             UpdateMode.FULL,
-            f"config changed since {checkpoint.run_dir.name}: {', '.join(changed)}",
+            f"config changed since {checkpoint.label}: {', '.join(changed)}",
         )
     if checkpoint.last_date >= data_last:
         reason = f"already processed through {checkpoint.last_date.date()}"
         if data_until is not None and data_until < checkpoint.last_date:
             reason += "; use type_run='all' (or --full) to rebuild as of an earlier date"
         return UpdatePlan(UpdateMode.UP_TO_DATE, reason)
-    return UpdatePlan(UpdateMode.RESUME, f"resuming from {checkpoint.run_dir.name}")
+    return UpdatePlan(UpdateMode.RESUME, f"resuming from {checkpoint.label}")
 
 
 def friendly_error(exc: BaseException) -> str | None:
@@ -185,10 +188,10 @@ def run_update(
     data_until: pd.Timestamp | None,
     build_report: bool,
     fred_client: FredClient,
-    historic_root: Path = DEFAULT_HISTORIC_ROOT,
+    outputs_root: Path = DEFAULT_OUTPUTS_ROOT,
     echo: Callable[[str], None] = print,
 ) -> UpdateOutcome:
-    """Run one config into <historic_root>/<config-stem>/results_<last-data-date>/.
+    """Run one config into <outputs_root>/<last-data-date>/historic/<config-stem>/.
 
     RESUME reuses the newest checkpoint; history revised where the checkpoint's
     HMM/JM rows are reused falls back to FULL.
@@ -198,11 +201,10 @@ def run_update(
     """
     started = time.perf_counter()
     name = config_path.stem
-    historic_dir = historic_root / name
-    cfg = load_config(config_path, overrides={"output_dir": historic_dir})
+    cfg = load_config(config_path, overrides={"output_dir": outputs_root})
     dates = _data_dates(cfg.data_path, data_until)
     data_last = pd.Timestamp(dates.max())
-    checkpoint = find_checkpoint(historic_dir)
+    checkpoint = find_checkpoint(outputs_root, name)
     plan = plan_update(
         type_run=type_run,
         checkpoint=checkpoint,
@@ -212,7 +214,7 @@ def run_update(
     )
     mode, reason = plan.mode, plan.reason
     if checkpoint is None and type_run is TypeRun.NEW_DATA:
-        reason += f" in {historic_dir.resolve()}"
+        reason += f" under {outputs_root.resolve()}"
     echo(f"[{mode.value.upper()}] {name}: {reason}")
     if mode is UpdateMode.UP_TO_DATE:
         # plan_update only returns UP_TO_DATE with a checkpoint; re-check for mypy.
@@ -222,9 +224,9 @@ def run_update(
             _write_report(checkpoint.run_dir, cfg.data_path, checkpoint.last_date, echo)
         return UpdateOutcome(mode, reason, current, 0, time.perf_counter() - started)
 
-    target = historic_dir / f"results_{data_last:%Y-%m-%d}"
+    target = output_dir(outputs_root, data_last, OutputKind.HISTORIC, name)
     if type_run is not TypeRun.ALL and (target / "snapshot.json").exists():
-        echo(f"[warn] overwriting existing {target.name}")
+        echo(f"[warn] overwriting existing {target.relative_to(outputs_root).as_posix()}")
 
     resume: ResumeState | None = None
     rejected: str | None = None
@@ -234,18 +236,18 @@ def run_update(
             resume = read_resume_state(checkpoint.run_dir, checkpoint.last_date)
         except (FileNotFoundError, ValueError, KeyError) as exc:  # pandas errors are ValueError
             mode = UpdateMode.FULL
-            reason = f"checkpoint {checkpoint.run_dir.name} unreadable ({exc}) -> full rerun"
-            rejected = checkpoint.run_dir.name
+            reason = f"checkpoint {checkpoint.label} unreadable ({exc}) -> full rerun"
+            rejected = checkpoint.label
             echo(f"[{mode.value.upper()}] {name}: {reason}")
     try:
-        run_dir = _run_engine(cfg, fred_client, data_last, resume)
+        run_dir = _run_engine(cfg, target, fred_client, data_last, resume)
     except HistoryRevisedError as exc:
         mode = UpdateMode.FULL
         reason = f"history revised in {cfg.data_path.name} ({exc}) -> full rerun"
         resume = None
-        rejected = checkpoint.run_dir.name if checkpoint is not None else None
+        rejected = checkpoint.label if checkpoint is not None else None
         echo(f"[{mode.value.upper()}] {name}: {reason}")
-        run_dir = _run_engine(cfg, fred_client, data_last, None)
+        run_dir = _run_engine(cfg, target, fred_client, data_last, None)
 
     since = checkpoint.last_date if resume is not None and checkpoint is not None else None
     new_dates = dates[dates > since] if since is not None else dates
@@ -254,7 +256,7 @@ def run_update(
         {
             "mode": mode.value,
             "reason": reason,
-            "checkpoint": checkpoint.run_dir.name if since is not None and checkpoint else None,
+            "checkpoint": checkpoint.label if since is not None and checkpoint else None,
             "checkpoint_rejected": rejected,
             "dates_added": len(new_dates),
             "first_new_date": f"{new_dates.min():%Y-%m-%d}" if len(new_dates) else None,
@@ -276,7 +278,7 @@ def _warn_code_changed(checkpoint: Checkpoint, echo: Callable[[str], None]) -> N
     if "unknown" in (old, new) or old == new:
         return
     echo(
-        f"[warn] code changed since {checkpoint.run_dir.name} ({old[:7]} -> {new[:7]}); "
+        f"[warn] code changed since {checkpoint.label} ({old[:7]} -> {new[:7]}); "
         "if regime math changed, rerun with type_run='all' (or --full)"
     )
 
@@ -317,23 +319,24 @@ def _json_config(cfg: EngineConfig) -> dict[str, Any]:
 
 def _run_engine(
     cfg: EngineConfig,
+    target: Path,
     fred_client: FredClient,
     data_last: pd.Timestamp,
     resume: ResumeState | None,
 ) -> Path:
-    """One engine run into cfg.output_dir/results_<data_last>/ (atomic tmp + rename)."""
+    """One engine run into ``target`` (atomic tmp + rename)."""
     stamp = f"{data_last:%Y-%m-%d}"
     engine_run(
-        cfg,
+        replace(cfg, output_dir=target.parent),
         fred_client=fred_client,
         run_date=f"{date.today():%Y-%m-%d}",  # when it ran; the folder is named by data date
         as_of_data_date=stamp,
-        run_name=f"results_{stamp}",
+        run_name=target.name,
         force=True,  # a same-named folder without snapshot.json is not a valid checkpoint
         data_until=stamp,
         resume=resume,
     )
-    return cfg.output_dir / f"results_{stamp}"
+    return target
 
 
 def _stamp_update(run_dir: Path, info: dict[str, Any]) -> None:

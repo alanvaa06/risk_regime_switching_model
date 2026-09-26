@@ -59,7 +59,8 @@ def test_cli_run_dispatches(
         ],
     )
     assert result.exit_code == 0, result.output
-    assert (tmp_path / "out" / "2024-12-31").exists()
+    assert (tmp_path / "out" / "2024-12-31" / "run" / "cfg" / "snapshot.json").exists()
+    assert str(tmp_path / "out" / "2024-12-31" / "run" / "cfg") in result.output
 
 
 def test_cli_gate_diagnostics_dispatches(
@@ -100,6 +101,7 @@ def test_cli_gate_diagnostics_dispatches(
     assert result.exit_code == 0, result.output
     assert (tmp_path / "diag" / "gate_diagnostics.json").exists()
     assert (tmp_path / "diag" / "g3_g5_frontier.csv").exists()
+    assert (tmp_path / "diag" / "run" / "snapshot.json").exists()  # the replayed engine run
 
 
 def test_cli_update_full_then_up_to_date(
@@ -126,13 +128,13 @@ def test_cli_update_full_then_up_to_date(
         encoding="utf-8",
     )
     root = tmp_path / "hist"
-    base = ["update", "--config", str(cfg_yaml), "--no-report", "--historic-root", str(root)]
+    base = ["update", "--config", str(cfg_yaml), "--no-report", "--outputs-root", str(root)]
     runner = CliRunner()
 
     first = runner.invoke(main, [*base, "--data-until", "15-06-2023"])
     assert first.exit_code == 0, first.output
     assert "[FULL]" in first.output
-    assert (root / "smoke" / "results_2023-06-15" / "snapshot.json").exists()
+    assert (root / "2023-06-15" / "historic" / "smoke" / "snapshot.json").exists()
 
     second = runner.invoke(main, base)
     assert second.exit_code == 0, second.output

@@ -3,7 +3,7 @@
 # both the HMM and JM state-probability figures. Mirrors configs/eval.yaml + JM.
 
 data_path: data.xlsx
-output_dir: outputs/jm_run
+output_dir: outputs
 
 # Return + vol estimators
 ewma_halflife_days: 30

@@ -4,7 +4,7 @@
 # acceptance_compare.json. hmm_enabled here is for EVALUATION only; the engine
 # default remains False.
 data_path: data.xlsx
-output_dir: outputs/hmm_eval
+output_dir: outputs
 hmm_enabled: true
 # Quarterly refit for the eval: the cadence-invariance bench showed monthly(21)
 # vs daily(1) label agreement = 0.9966, and the Hamilton filter runs DAILY
